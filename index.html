@@ -485,14 +485,6 @@ micBtn.addEventListener("click", () => {
 
 function requireUserTapOnce(hint = "マイク許可が必要。右下の🎤をもう一度タップしてね") {
   setTelop(hint);
-  const once = async () => {
-    micBtn.removeEventListener("click", once);
-    setTelop("マイク初期化中…");
-    // ここも await しない
-    startListening(true);
-  };
-  // ページ全体ではなく mic ボタンに限定（誤タップ防止 & iOS安定）
-  micBtn.addEventListener("click", once, { once: true });
 }
 
 function humanReadableMicError(e) {
@@ -571,19 +563,11 @@ function setupSpeechAPI() {
 async function startMediaRecorder(userGesture = false) {
   try {
     if (!everReadyShown) setPreparing("マイク初期化中");
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true }
-    });
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (e) {
-    // ここで“許可が必要”を出し分け
-    const msg = humanReadableMicError(e);
-    setTelop(msg);
-
-    // 直前がユーザー操作だったのに失敗＝過去に「ブロック」済みの可能性が高い
-    // → requireUserTapOnce で再トライを出すが、実質は「ブラウザのサイト設定で許可→再読込」が必要
-    if (!userGesture) {
-      requireUserTapOnce();
-    }
+    setTelop(humanReadableMicError(e));
+    // ← ここで requireUserTapOnce() を呼ばない！
+    // 「マイクボタンを再タップしてください」と伝えるだけ。
     return;
   }
 
