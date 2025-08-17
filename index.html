@@ -394,24 +394,32 @@ const dog = document.getElementById('dog');
   const CHAT_URL = WORKER_BASE + "/chat";
   const STT_URL  = WORKER_BASE + "/stt";
 
-  // ===== テロップ（最低表示時間つき） =====
+  // ===== テロップ（最低表示時間つき & HUDミラー） =====
   const telop = document.getElementById("aiTelop");
-  const setTelop = (t) => { telop.textContent = t };
+  const stHud = document.getElementById("st");  // 画面左上の「状態: 〜」にミラー
+
+  // テロップとHUDの「状態」を同時に更新
+  function setTelop(t) {
+    if (telop) telop.textContent = t;
+    if (stHud) stHud.textContent = t;   // ← ここでミラー表示
+  }
+
   const MIN_PREP_MS = 1500;
   let prepStartedAt = 0;
   let everReadyShown = false;
 
-  const setPreparing = (why = "") => {
+  function setPreparing(why = "") {
     prepStartedAt = performance.now();
     if (!everReadyShown) {
       setTelop("準備中…" + (why ? `（${why}）` : ""));
     }
-  };
-  const setReady = () => {
+  }
+
+  function setReady() {
     const show = () => { setTelop("話しかけてね！"); everReadyShown = true; };
     const rest = MIN_PREP_MS - (performance.now() - prepStartedAt);
     if (rest > 0) setTimeout(show, rest); else show();
-  };
+  }
 
   // ====== 音声→文字 & チャット ======
   async function askChat(userText) {
