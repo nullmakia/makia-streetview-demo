@@ -31,9 +31,10 @@
   }
   /* ↓ 少年の右横に寄せる：少年の左位置 + 少年の幅 + 隙間(6vw) */
   .dog {
-    left: calc(15vw + min(40vw, 30px) + 20vw);
+    /* 少年 left(12vw) + 少年幅 + 隙間(3vw) → さらに左寄せ */
+    left: calc(6vw + min(20vw, 20px) + 3vw);
     bottom: 10vh;
-    width: min(35vw, 160px);
+    width: min(26vw, 200px);
     aspect-ratio: 5/6;
     background: url('fool2.png') center / contain no-repeat;
   }
@@ -105,13 +106,12 @@
   </div>
 
 <!-- 画面にトグルとキャリブレーションを追加 -->
-<button id="btnGyro" style="position:fixed;right:8px;bottom:64px;z-index:1000;">🎯 ジャイロON</button>
+<button id="btnGyro" style="position:fixed;right:8px;bottom:64px;z-index:1000;">🎯 ジャイロOFF</button>
 <button id="btnCal"  style="position:fixed;right:8px;bottom:28px;z-index:1000;">↻ 方向校正</button>
 
 <script>
 // 既存の変数に追加
-let gyroMode = true;           // ジャイロで視線を制御するか
-let gyroAttached = false;      // deviceorientation を既に購読済みか
+let gyroMode = false;           // ジャイロで視線を制御するか
 let headingOffset = 0;          // 校正用オフセット（度）
 let smoothedHeading = null;     // 既存の平滑化済みヘディングを再利用
 let lastDeviceHeading = null;   // 端末からの最新ヘディング
@@ -200,24 +200,6 @@ async function enableDeviceOrientation() {
   }
 }
 
-// 起動後に確実にジャイロ購読を張る（iOSは自動不可）
-async function autoEnableGyroAtBoot() {
-  if (gyroAttached) return;                 // 二重登録ガード
-  const C = window.DeviceOrientationEvent;
-  if (!C) return;
-  try {
-    if (typeof C.requestPermission === 'function') {
-      // iOS: ユーザー操作必須。ボタンで enableDeviceOrientation() を実行してもらう
-      document.getElementById('btnGyro').textContent = '🎯 ジャイロON';
-      return;
-    }
-    // Android/PC: 自動購読
-    window.addEventListener('deviceorientation', onDeviceOrientation, true);
-    gyroAttached = true;
-    document.getElementById('btnGyro').textContent = '🎯 ジャイロON';
-  } catch {}
-}
-
 // ジャイロON/OFFトグル
 document.getElementById('btnGyro').addEventListener('click', async () => {
   if (!gyroMode) {
@@ -231,26 +213,12 @@ document.getElementById('btnGyro').addEventListener('click', async () => {
   }
 });
 
-// DOM 準備直後に一度試す
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', autoEnableGyroAtBoot, { once:true });
-} else {
-  autoEnableGyroAtBoot();
-}
-// 画面復帰でも念のため再試行
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) autoEnableGyroAtBoot();
-});
-
 // 現在の向きを「正面」に校正（端末を向けた方向を0°とみなす）
 document.getElementById('btnCal').addEventListener('click', () => {
   if (lastDeviceHeading == null) return;
   // 直近のヘディングを正面にするためのオフセットを再計算
   headingOffset = norm360((smoothedHeading ?? lastDeviceHeading) - lastDeviceHeading);
 });
-
-// Street View 初期化が完了したら、もう一度ジャイロ購読を試す
-document.addEventListener('app:booted', autoEnableGyroAtBoot, { once:true });
 </script>
 
 <script type="module">
@@ -315,34 +283,11 @@ document.addEventListener('app:booted', autoEnableGyroAtBoot, { once:true });
     } else {
       if (st) st.textContent = 'Geolocation未対応（fallback表示）';
     }
-      // ★ 起動完了を知らせる（この後にジャイロ購読を再試行）
-      document.dispatchEvent(new Event('app:booted'));
   }
 
   // google.maps が来たら起動
   const ready = () => (window.google?.maps?.importLibrary) ? boot() : setTimeout(ready, 30);
   ready();
-</script>
-
-<script>
-// ----- キャラのタップ反応（復活） -----
-function bounce(el, cls) {
-  el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls);
-  el.addEventListener('animationend', () => el.classList.remove(cls), { once:true });
-}
-function bubble(el, text) {
-  const b = document.createElement('div');
-  b.className = 'bubble'; b.textContent = text; el.appendChild(b);
-  setTimeout(() => b.remove(), 800);
-}
-const boy = document.getElementById('boy');
-const dog = document.getElementById('dog');
-['click','touchend'].forEach(ev=>{
-  boy.addEventListener(ev, (e)=>{ if(ev==='touchend') e.preventDefault();
-    bounce(boy,'react'); bubble(boy,'いこう！'); }, {passive:false});
-  dog.addEventListener(ev, (e)=>{ if(ev==='touchend') e.preventDefault();
-    bounce(dog,'react'); bubble(dog,'ワン！'); }, {passive:false});
-});
 </script>
 
 <!-- ★YOUR_API_KEY をあなたのキーに置き換え -->
