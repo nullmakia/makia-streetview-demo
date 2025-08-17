@@ -360,30 +360,32 @@ const dog = document.getElementById('dog');
 });
 </script>
 <script>
-/** GitHub Pages から Cloudflare Worker を叩いて結果を表示する自動テスト */
-(async () => {
-  // ← 実URLに置換してください（/chat を忘れずに）
+/** GitHub Pages から Cloudflare Worker を叩いて結果を表示する自動テスト（安全化） */
+(() => {
   const WORKER_ENDPOINT = "https://makia-animator.animator.workers.dev/chat";
-
   const out = document.getElementById("aiResult");
-  try {
-    const res = await fetch(WORKER_ENDPOINT, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        stream: false, // まずはJSONで確認。SSEは慣れてから
-        messages: [{ role: "user", content: "疎通テスト：1行で返答して" }]
-      }),
-    });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const data = await res.json();
-    const text = data?.choices?.[0]?.message?.content ?? JSON.stringify(data);
-    out.textContent = text;
-  } catch (e) {
-    console.error("Worker fetch error", e);
-    out.textContent = "APIエラー: " + (e?.message || e);
-  }
+  if (!out) return; // ← ここがポイント。無ければ何もしない
+
+  (async () => {
+    try {
+      const res = await fetch(WORKER_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          stream: false,
+          messages: [{ role: "user", content: "疎通テスト：1行で返答して" }]
+        }),
+      });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const data = await res.json();
+      const text = data?.choices?.[0]?.message?.content ?? JSON.stringify(data);
+      out.textContent = text;
+    } catch (e) {
+      console.error("Worker fetch error", e);
+      out.textContent = "APIエラー: " + (e?.message || e);
+    }
+  })();
 })();
 </script>
 <script>
@@ -486,135 +488,194 @@ const dog = document.getElementById('dog');
     }
   });
 
-  function requireUserTapOnce(hint = "マイク許可が必要。画面を1回タップしてね") {
-    askedTap = true;
-    setTelop(hint);   // ← setPreparingではなく直接setTelopにする
-    const once = async () => {
-      document.removeEventListener("pointerdown", once, { capture: true });
-      setTelop("マイク初期化中…");
-      await startListening(true);
-    };
-    document.addEventListener("pointerdown", once, { once: true, capture: true });
-  }
+function requireUserTapOnce(hint = "マイク許可が必要。画面を1回タップしてね") {
+  setTelop(hint);           // 準備中は出さず、明示メッセージのみ
+  // pointerdown よりブラウザ互換が高い click を使用
+  const once = async () => {
+    document.removeEventListener("click", once);
+    setTelop("マイク初期化中…");
+    await startListening(true);
+  };
+  // ページ全体クリックで1回だけ再試行
+  document.addEventListener("click", once, { once: true });
+}
 
-  function setupSpeechAPI() {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) return null;
-    const r = new SR();
-    r.lang = "ja-JP";
-    r.interimResults = false;
-    r.continuous = true;
-    r.maxAlternatives = 1;
-  
-    let srReadyTimer = null;
-    r.onstart = () => {
-      running = true;
-      if (!everReadyShown) setPreparing("待機中");
-      srReadyTimer = setTimeout(() => setReady(), 2000); // 保険
-    };
-    const markReady = () => { if (srReadyTimer) { clearTimeout(srReadyTimer); srReadyTimer = null; } setReady(); };
-    r.onaudiostart = markReady;
-    r.onsoundstart = markReady;
-  
-    r.onend = () => {
-      running = false;
-      if (srReadyTimer) { clearTimeout(srReadyTimer); srReadyTimer = null; }
-      // ★ 停止ボタンで keepAlive=false のときは“再開しない”
-      setTimeout(() => {
-        if (keepAlive) {
-          try { r.start(); } catch {}
-        }
-      }, 300);
-    };
-    r.onerror = (e) => {
-      if (e.error === "not-allowed" || e.error === "service-not-allowed") {
-        requireUserTapOnce();
-      }
-    };
-    r.onresult = (ev) => {
-      let t = "";
-      for (let i = ev.resultIndex; i < ev.results.length; i++) {
-        if (ev.results[i].isFinal) t += ev.results[i][0].transcript;
-      }
-      t = (t || "").trim();
-      if (t && t !== lastText) { lastText = t; askChat(t); }
-    };
-    usingSpeechAPI = true;
-    return r;
-  }
+function setupSpeechAPI() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return null;
 
-  async function startMediaRecorder(userGesture = false) {
-    try {
-      if (!everReadyShown) setPreparing("マイク初期化中");
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true }
-      });
-    } catch (e) {
-      requireUserTapOnce();
-      return;
-    }
-  
-    // ★ 権限が取れた＝もう話しかけられる状態 → Ready にしてOK
-    const [track] = stream.getAudioTracks();
-    if (track) {
-      if (track.muted) {
-        // 一部端末は最初 muted なので、unmute を待って Ready
-        track.onunmute = () => { setReady(); track.onunmute = null; };
-        // 念のための保険（2秒でReady）
-        setTimeout(() => setReady(), 2000);
-      } else {
-        setReady();
-      }
-    } else {
-      // 稀に tracks 無しで返る個体があるので保険
-      setTimeout(() => setReady(), 2000);
-    }
-  
-    const m = new MediaRecorder(stream, { mimeType: "audio/webm" });
-    chunks = [];
-    // onstart が来る端末ではここでも Ready 保険（実害なし）
-    m.onstart = () => setReady();
-  
-    m.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
-    m.onstop = async () => {
-      if (!chunks.length) return;
-      const blob = new Blob(chunks, { type: "audio/webm" });
-      chunks = [];
-      try {
-        const res = await fetch(STT_URL, {
-          method: "POST",
-          headers: { "Content-Type": "audio/webm" },
-          body: await blob.arrayBuffer()
-        });
-        const { text = "" } = await res.json();
-        const t = (text || "").trim();
-        if (t && t !== lastText) { lastText = t; askChat(t); }
-      } catch {}
-      if (running) { try { m.start(2000); } catch {} }
-    };
-  
-    rec = m; running = true;
-    try { m.start(2000); } catch {}
-  }
+  const r = new SR();
+  r.lang = "ja-JP";
+  r.interimResults = false;
+  r.continuous = true;
+  r.maxAlternatives = 1;
 
-  async function startListening(userGesture = false) {
-    if (running) return;
-    // 1) Web Speech API が使えれば優先（超低遅延）
-    rec = setupSpeechAPI();
-    if (rec) {
-      try { rec.start(); }
-      catch (_) { requireUserTapOnce(); }
-      return;
-    }
-    // 2) 使えなければ MediaRecorder + /stt
-    await startMediaRecorder(userGesture);
-  }
+  let srReadyTimer = null;
 
-  function stopListening() {
+  r.onstart = () => {
+    running = true;
+    if (!everReadyShown) setPreparing("待機中");
+    // onstart だけで Ready にならない端末向け保険
+    srReadyTimer = setTimeout(() => setReady(), 2000);
+  };
+
+  const markReady = () => {
+    if (srReadyTimer) { clearTimeout(srReadyTimer); srReadyTimer = null; }
+    setReady();
+  };
+  r.onaudiostart = markReady;
+  r.onsoundstart = markReady;
+
+  r.onend = () => {
     running = false;
-    try { rec && rec.stop && rec.stop(); } catch {}
-    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    if (srReadyTimer) { clearTimeout(srReadyTimer); srReadyTimer = null; }
+    // 停止ボタンを押していないなら自動再開
+    if (keepAlive) {
+      setTimeout(() => { try { r.start(); } catch {} }, 300);
+    }
+  };
+
+  r.onerror = (e) => {
+    // 典型：ユーザー操作なし/HTTPSでない/許可未付与
+    if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+      requireUserTapOnce();
+    } else {
+      // 他エラーはテロップ表示のみ（再開は onend 側で担保）
+      setTelop("音声認識エラー: " + e.error);
+    }
+  };
+
+  r.onresult = (ev) => {
+    let t = "";
+    for (let i = ev.resultIndex; i < ev.results.length; i++) {
+      if (ev.results[i].isFinal) t += ev.results[i][0].transcript;
+    }
+    t = (t || "").trim();
+    if (t && t !== lastText) { lastText = t; askChat(t); }
+  };
+
+  usingSpeechAPI = true;
+  return r;
+}
+
+
+async function startMediaRecorder(userGesture = false) {
+  try {
+    if (!everReadyShown) setPreparing("マイク初期化中");
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true }
+    });
+  } catch (e) {
+    // 権限ブロック時はワンタップ誘導
+    requireUserTapOnce();
+    return;
   }
+
+  // 準備OK表示（iOSで最初 muted の場合にも保険）
+  const [track] = stream.getAudioTracks();
+  if (track) {
+    if (track.muted) {
+      track.onunmute = () => { setReady(); track.onunmute = null; };
+      setTimeout(() => setReady(), 2000);
+    } else {
+      setReady();
+    }
+  } else {
+    setTimeout(() => setReady(), 2000);
+  }
+
+  // ★ ここが肝：端末に合う mimeType を選んで MediaRecorder を初期化
+  const mime = pickAudioMime();
+  let mrOptions = {};
+  if (mime) mrOptions.mimeType = mime;
+
+  let m;
+  try {
+    m = new MediaRecorder(stream, mrOptions);
+  } catch (e) {
+    // 型指定で失敗する端末は「型未指定」で再試行
+    try { m = new MediaRecorder(stream); }
+    catch (e2) {
+      setTelop("録音初期化エラー");
+      return;
+    }
+  }
+
+  chunks = [];
+  m.onstart = () => setReady();
+  m.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+
+  m.onstop = async () => {
+    if (!chunks.length) {
+      if (running) { try { m.start(2000); } catch {} }
+      return;
+    }
+    // 実際に得られた Blob の型をそのまま使う（iOSは audio/mp4 になりがち）
+    const blob = new Blob(chunks, { type: m.mimeType || (chunks[0] && chunks[0].type) || "" });
+    chunks = [];
+
+    try {
+      const res = await fetch(STT_URL, {
+        method: "POST",
+        headers: { "Content-Type": blob.type || "application/octet-stream" },
+        body: await blob.arrayBuffer()
+      });
+      const { text = "" } = await res.json();
+      const t = (text || "").trim();
+      if (t && t !== lastText) { lastText = t; askChat(t); }
+    } catch (e) {
+      setTelop("音声送信エラー");
+    }
+    if (running) { try { m.start(2000); } catch {} }
+  };
+
+  rec = m; running = true;
+  try { m.start(2000); } catch {}
+}
+
+
+async function startListening(userGesture = false) {
+  if (running) return;
+
+  // まずは Web Speech API（低遅延）
+  rec = setupSpeechAPI();
+  if (rec) {
+    try {
+      rec.start();
+    } catch (_) {
+      // ユーザー操作が必要/端末制限など
+      requireUserTapOnce();
+    }
+    return;
+  }
+
+  // 使えなければ MediaRecorder + /stt にフォールバック
+  await startMediaRecorder(userGesture);
+}
+
+// 端末が対応している音声 MIME を上から順に選ぶ
+function pickAudioMime() {
+  const cands = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/mp4;codecs=mp4a.40.2", // iOS Safari 向け
+    "audio/mp4"
+  ];
+  for (const t of cands) {
+    if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) {
+      return t;
+    }
+  }
+  // 型未指定で作れる端末用（ブラウザにお任せ）
+  return "";
+}
+
+function stopListening() {
+  running = false;
+  try { rec && rec.stop && rec.stop(); } catch {}
+  try { stream && stream.getTracks().forEach(t => t.stop()); } catch {}
+  stream = null;
+}
 
   // 初期テロップは「タップで開始」に
   telop.textContent = "タップで開始";
