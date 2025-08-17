@@ -91,6 +91,18 @@
     z-index: 3000;
   }
   .hud button { padding: 6px 8px; border: 0; border-radius: 8px; }
+  /* === テロップとマイク開始ボタン === */
+  #aiTelopBox{
+    position:fixed; left:12px; right:12px; bottom:12px;
+    padding:10px 12px; background:rgba(255,255,255,.92);
+    border:1px solid #e5e5e5; border-radius:12px; backdrop-filter:blur(4px);
+    box-shadow:0 4px 18px rgba(0,0,0,.12); z-index:4000; font-size:14px;
+  }
+  #aiTelopBox .label{ font-weight:700; margin-right:6px; }
+  #micStart{
+    position:fixed; right:12px; bottom:80px; z-index:4001;
+    padding:10px 12px; border:1px solid #111; background:#111; color:#fff; border-radius:10px;
+  }
 </style>
 
 <body>
@@ -113,10 +125,13 @@
       <strong>AI:</strong> <span id="aiResult">接続テスト中…</span>
     </div>
   </div>
-
-<!-- 画面にトグルとキャリブレーションを追加 -->
-<button id="btnGyro" style="position:fixed;right:8px;bottom:64px;z-index:1000;">🎯 ジャイロOFF</button>
-<button id="btnCal"  style="position:fixed;right:8px;bottom:28px;z-index:1000;">↻ 方向校正</button>
+  <!-- テロップ表示枠 -->
+  <div id="aiTelopBox"><span class="label">Fool：</span><span id="aiTelop">準備中…</span></div>
+  <!-- ユーザー操作でマイク開始（iOS/Safari 対策） -->
+  <button id="micStart" title="長押し不要・一度押せば連続で聞きます">🎤 マイク開始</button>
+  <!-- 画面にトグルとキャリブレーションを追加 -->
+  <button id="btnGyro" style="position:fixed;right:8px;bottom:64px;z-index:1000;">🎯 ジャイロOFF</button>
+  <button id="btnCal"  style="position:fixed;right:8px;bottom:28px;z-index:1000;">↻ 方向校正</button>
 
 <script>
 // 既存の変数に追加
@@ -354,7 +369,118 @@ const dog = document.getElementById('dog');
   }
 })();
 </script>
+<script>
+(() => {
+  // ← あなたの Worker の実URLに必ず置換（末尾は /chat）
+  const WORKER_CHAT = "https://makia-animator.animator.workers.dev/chat";
 
+  const telopEl = document.getElementById("aiTelop");
+  const micBtn  = document.getElementById("micStart");
+
+  // --- OpenAI返答をSSEで受け取りながらテロップに流す ---
+  async function askChat(userText) {
+    try {
+      // 送信（SSE）
+      const res = await fetch(WORKER_CHAT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          stream: true,
+          messages: [
+            { role: "system", content: "あなたは元気な少年キャラ『Fool』です。日本語で短いセリフで返答してください。" },
+            { role: "user", content: userText }
+          ]
+        })
+      });
+      if (!res.ok || !res.body) {
+        telopEl.textContent = "エラー: " + (res.status || "接続失敗");
+        return;
+      }
+
+      telopEl.textContent = ""; // 返答開始で消す
+
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream:true });
+        let idx;
+        while ((idx = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, idx).trim();
+          buf = buf.slice(idx + 1);
+          if (!line.startsWith("data:")) continue;
+          const payload = line.slice(5).trim();
+          if (payload === "[DONE]") { buf = ""; break; }
+          try {
+            const j = JSON.parse(payload);
+            const delta = j?.choices?.[0]?.delta?.content ?? "";
+            if (delta) telopEl.textContent += delta; // テロップに逐次追記
+          } catch {}
+        }
+      }
+    } catch (e) {
+      telopEl.textContent = "通信エラー: " + (e?.message || e);
+    }
+  }
+
+  // --- Web Speech API（音声→文字） ---
+  function createRecognizer() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return null;
+    const r = new SR();
+    r.lang = "ja-JP";
+    r.interimResults = false;  // 確定結果だけ扱う
+    r.continuous = true;       // 連続で聞き続ける
+    r.maxAlternatives = 1;
+    return r;
+  }
+
+  let rec = null, autoRestart = true;
+  function startListen() {
+    if (!rec) {
+      rec = createRecognizer();
+      if (!rec) { telopEl.textContent = "このブラウザは音声入力に未対応です"; return; }
+
+      rec.onstart  = () => { micBtn.textContent = "🎧 聞いてます…（停止）"; };
+      rec.onend    = () => { micBtn.textContent = "🎤 マイク開始"; if (autoRestart) setTimeout(()=>{ try { rec.start(); } catch {} }, 200); };
+      rec.onerror  = (e) => {
+        // 権限ブロックなど
+        if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+          telopEl.textContent = "マイク許可が必要です";
+        }
+      };
+      rec.onresult = (ev) => {
+        let finalText = "";
+        for (let i = ev.resultIndex; i < ev.results.length; i++) {
+          if (ev.results[i].isFinal) finalText += ev.results[i][0].transcript;
+        }
+        finalText = finalText.trim();
+        if (finalText) {
+          // 一旦止めて応答→自動再開
+          try { rec.stop(); } catch {}
+          askChat(finalText);
+        }
+      };
+    }
+    try { rec.start(); } catch {}
+  }
+  function stopListen() { if (rec) try { rec.stop(); } catch {} }
+
+  // ボタン：開始/停止トグル
+  let listening = false;
+  micBtn.addEventListener("click", () => {
+    listening = !listening;
+    if (listening) { autoRestart = true; startListen(); }
+    else { autoRestart = false; stopListen(); }
+  });
+
+  // 初期テキスト
+  telopEl.textContent = "ボタンを押して話しかけてね！";
+})();
+</script>
 <!-- ★YOUR_API_KEY をあなたのキーに置き換え -->
 <script async src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAQQHZONAJ27HZwG20IJbRYZXZ6ADxbtP0&v=weekly"></script>
 </body>
