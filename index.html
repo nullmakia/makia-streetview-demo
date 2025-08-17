@@ -129,19 +129,6 @@
     border-color: #fff transparent transparent transparent;
     filter: drop-shadow(0 -1px 0 rgba(0,0,0,.08));
   }
-  /* マイク許可のオーバーレイ（必要時のみ表示） */
-  #micPerm {
-    position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
-    background: rgba(0,0,0,.35); z-index: 5000;
-  }
-  #micPerm .box {
-    background:#fff; padding:16px 18px; border-radius:12px; max-width: 90vw; text-align:center;
-    box-shadow:0 8px 28px rgba(0,0,0,.2); font-size:14px;
-  }
-  #micPerm button {
-    margin-top:10px; padding:10px 12px; border-radius:10px; border:1px solid #111; background:#111; color:#fff;
-  }
-
 </style>
 
 <body>
@@ -161,14 +148,6 @@
   <button id="btnGyro" style="position:fixed;right:8px;bottom:64px;z-index:1000;">🎯 ジャイロOFF</button>
   <button id="btnCal"  style="position:fixed;right:8px;bottom:28px;z-index:1000;">↻ 方向校正</button>
   <div id="foolBalloon"><span class="name">Fool</span><span id="aiTelop">準備中…</span></div>
-
-  <!-- 自動開始がブロックされた場合だけ出す（iOS Safari想定） -->
-  <div id="micPerm" aria-hidden="true">
-    <div class="box">
-      🎤 マイクを有効化してください（1回だけタップ）<br>
-      <button id="enableMic">マイクを許可して開始</button>
-    </div>
-  </div>
 <script>
 // 既存の変数に追加
 let gyroMode = false;           // ジャイロで視線を制御するか
@@ -407,37 +386,27 @@ const dog = document.getElementById('dog');
 </script>
 <script>
 (() => {
-  // ← 必ずあなたの実URLに（末尾 /chat と /stt）
   const WORKER_BASE = "https://makia-animator.animator.workers.dev";
   const CHAT_URL = WORKER_BASE + "/chat";
   const STT_URL  = WORKER_BASE + "/stt";
 
+  // ===== テロップ（最低表示時間つき） =====
   const telop = document.getElementById("aiTelop");
-  const perm  = document.getElementById("micPerm");
-  const btn   = document.getElementById("enableMic");
-
   const setTelop = (t) => { telop.textContent = t };
-
-  // 準備中を最低この時間は表示（必要に応じて調整）
-  const MIN_PREP_MS = 1500; // ← 1.5秒。もっと長くしたければ 2000~2500 などに
+  const MIN_PREP_MS = 1500;
   let prepStartedAt = 0;
 
   const setPreparing = (why = "") => {
     prepStartedAt = performance.now();
     setTelop("準備中…" + (why ? `（${why}）` : ""));
   };
-
   const setReady = () => {
-    const elapsed = performance.now() - prepStartedAt;
-    const rest = MIN_PREP_MS - elapsed;
-    if (rest > 0) {
-      setTimeout(() => setTelop("話しかけてね！"), rest);
-    } else {
-      setTelop("話しかけてね！");
-    }
+    const rest = MIN_PREP_MS - (performance.now() - prepStartedAt);
+    if (rest > 0) setTimeout(() => setTelop("話しかけてね！"), rest);
+    else setTelop("話しかけてね！");
   };
 
-  // ==== 返答をSSEで逐次テロップ ====
+  // ====== 音声→文字 & チャット ======
   async function askChat(userText) {
     try {
       const res = await fetch(CHAT_URL, {
@@ -452,9 +421,10 @@ const dog = document.getElementById('dog');
           ]
         })
       });
-      if (!res.ok || !res.body) { telop.textContent = "接続エラー(" + res.status + ")"; return; }
+      if (!res.ok || !res.body) { setTelop("接続エラー(" + res.status + ")"); return; }
 
-      telop.textContent = ""; // 返答開始で消す
+      // 逐次反映
+      setTelop("");
       const reader = res.body.getReader();
       const dec = new TextDecoder();
       let buf = "";
@@ -476,12 +446,25 @@ const dog = document.getElementById('dog');
         }
       }
     } catch (e) {
-      telop.textContent = "通信エラー: " + (e?.message || e);
+      setTelop("通信エラー: " + (e?.message || e));
     }
   }
 
-  // ==== 音声→文字（優先：Web Speech / 代替：MediaRecorder + /stt） ====
-  let rec = null, stream = null, chunks = [], usingSpeechAPI = false, running = false, lastText = "";
+  // ====== 音声入力（自動開始＋初回タップで再試行） ======
+  let rec = null, stream = null, chunks = [], usingSpeechAPI = false, running = false, lastText = "", askedTap = false;
+
+  function requireUserTapOnce(hint = "マイク許可が必要。画面を1回タップしてね") {
+    if (askedTap) return;
+    askedTap = true;
+    setPreparing(hint);
+    const once = async () => {
+      document.removeEventListener("pointerdown", once, { capture: true });
+      setPreparing("マイク初期化中");
+      await startListening(true); // userGesture = true
+    };
+    // capture で確実に最初のタップを取る
+    document.addEventListener("pointerdown", once, { once: true, capture: true });
+  }
 
   function setupSpeechAPI() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -492,22 +475,22 @@ const dog = document.getElementById('dog');
     r.continuous = true;
     r.maxAlternatives = 1;
 
-    // ★ ここは“準備中のまま”にする
+    // 起動直後は準備中のまま
     r.onstart = () => { running = true; setPreparing("待機中"); };
+    // 実際に音が取り込まれたらReady
+    r.onaudiostart = () => setReady();
+    r.onsoundstart = () => setReady();
 
-    // ★ 実際に音声取り込みが開始したら Ready にする
-    r.onaudiostart  = () => setReady();
-    r.onsoundstart  = () => setReady(); // 端末によってはこっちが先に来る
-
-    r.onend   = () => {
+    r.onend = () => {
       running = false;
       setPreparing("待機中");
+      // 自動再開（ブラウザが許す限り）
       setTimeout(()=>{ try { r.start(); } catch {} }, 200);
     };
     r.onerror = (e) => {
+      // 許可が必要 / ジェスチャ必須など
       if (e.error === "not-allowed" || e.error === "service-not-allowed") {
-        showPerm();
-        setPreparing("マイク許可が必要");
+        requireUserTapOnce();
       }
     };
     r.onresult = (ev) => {
@@ -522,20 +505,21 @@ const dog = document.getElementById('dog');
     return r;
   }
 
-
-  async function startMediaRecorder() {
+  async function startMediaRecorder(userGesture = false) {
     try {
-      setPreparing("マイク初期化中");
-      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation:true, noiseSuppression:true } });
+      setPreparing(userGesture ? "マイク初期化中" : "マイク初期化中");
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true }
+      });
     } catch (e) {
-      showPerm(); setPreparing("マイク許可が必要"); return;
+      // 許可が必要 or ユーザージェスチャ必須
+      requireUserTapOnce();
+      return;
     }
     const m = new MediaRecorder(stream, { mimeType: "audio/webm" });
     chunks = [];
 
-    // ★ 録音が“本当に開始”した瞬間に Ready
-    m.onstart = () => setReady();
-
+    m.onstart = () => setReady(); // 本当に録音が始まった瞬間にReady
     m.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
     m.onstop = async () => {
       if (!chunks.length) return;
@@ -549,43 +533,37 @@ const dog = document.getElementById('dog');
         });
         const { text = "" } = await res.json();
         const t = (text || "").trim();
-        if (t && t !== lastText) {
-          lastText = t;
-          askChat(t);
-        }
-      } catch (e) { /* 無視（次サイクルへ） */ }
-      // 連続収音
+        if (t && t !== lastText) { lastText = t; askChat(t); }
+      } catch {}
       if (running) { try { m.start(2000); } catch {} }
     };
+
     rec = m; running = true;
     try { m.start(2000); } catch {}
   }
 
-  function showPerm() { perm.style.display = "flex"; }
-  function hidePerm() { perm.style.display = "none"; }
-
-  async function startListening() {
+  async function startListening(userGesture = false) {
     if (running) return;
-    // 1) Web Speech API が使えれば優先（超低レイテンシ）
+    // 1) Web Speech API が使えれば優先（超低遅延）
     rec = setupSpeechAPI();
-    if (rec) { try { rec.start(); } catch { showPerm(); } return; }
-    // 2) 使えなければ MediaRecorder + /stt（広い互換性）
-    await startMediaRecorder();
+    if (rec) {
+      try { rec.start(); }
+      catch (_) { requireUserTapOnce(); }
+      return;
+    }
+    // 2) 使えなければ MediaRecorder + /stt
+    await startMediaRecorder(userGesture);
   }
 
   function stopListening() {
     running = false;
-    if (usingSpeechAPI && rec) try { rec.stop(); } catch {}
-    if (!usingSpeechAPI && rec) try { rec.stop(); } catch {}
+    try { rec && rec.stop && rec.stop(); } catch {}
     if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
   }
 
-  // 自動開始をまず試みる（許可済みブラウザではボタン不要で走る）
-  setPreparing("マイク初期化中");   
-  startListening();
-
-  // 自動開始がブロックされた場合のみ、ワンタップで開始
-  btn?.addEventListener("click", async () => { hidePerm(); setPreparing("マイク初期化中"); await startListening(); }); // ← 変更
+  // 起動時に自動開始（許可済み端末はそのまま、未許可は“初回タップで再試行”へ）
+  setPreparing("マイク初期化中");
+  startListening(false);
 
   // ページ離脱で停止
   window.addEventListener("pagehide", stopListening);
