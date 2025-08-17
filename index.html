@@ -107,41 +107,127 @@
 let pano, sv;
 let lastPanoId = null;
 
+// ★ 角度ユーティリティ
+const toRad = d => d * Math.PI / 180;
+const toDeg = r => r * 180 / Math.PI;
+const norm360 = a => (a % 360 + 360) % 360;
+const shortestDeltaDeg = (a,b) => {
+  let d = norm360(b) - norm360(a);
+  if (d > 180) d -= 360;
+  if (d < -180) d += 360;
+  return d;
+};
+
+// ★ 2点間の進行方位（初期方位, bearing）
+function bearing(lat1, lng1, lat2, lng2) {
+  const φ1 = toRad(lat1), φ2 = toRad(lat2), Δλ = toRad(lng2 - lng1);
+  const y = Math.sin(Δλ) * Math.cos(φ2);
+  const x = Math.cos(φ1)*Math.cos(φ2) + Math.sin(φ1)*Math.sin(φ2)*Math.cos(Δλ);
+  return norm360(toDeg(Math.atan2(y, x)));
+}
+
+// ★ スムージング（指数移動平均）
+function smoothAngle(prev, next, alpha = 0.25) {
+  if (prev == null) return next;
+  const delta = shortestDeltaDeg(prev, next);
+  return norm360(prev + alpha * delta);
+}
+
 function init() {
   sv = new google.maps.StreetViewService();
   pano = new google.maps.StreetViewPanorama(document.getElementById('pano'), {
     addressControl: false,
     fullscreenControl: false,
     motionTracking: false,
-    disableDefaultUI: true
+    disableDefaultUI: true,
+    visible: true
   });
 
-  // GPS追従：近傍パノラマへ
   const st  = document.getElementById('st');
   const spd = document.getElementById('spd');
+  const hdgEl = document.getElementById('hdg');
+
+  // ★ 進行方向・位置を保持
+  let lastPos = null;            // {lat, lng}
+  let smoothedHeading = null;    // 平滑化済み方位（度）
+
+  // ★ 進行方向にPovを向ける
+  function setHeadingTo(headingDeg) {
+    const pov = pano.getPov();
+    // 小さな揺れは無視（5〜8度くらい）
+    const delta = Math.abs(shortestDeltaDeg(pov.heading ?? 0, headingDeg));
+    if (delta < 6) return;
+    pano.setPov({ heading: headingDeg, pitch: pov.pitch ?? 0, zoom: 1 });
+  }
+
+  // ★ パノラマを「前進方向のリンク」に沿って切替
+  function maybeFollowForwardLink(panoData, desiredHeading) {
+    if (!panoData?.links?.length) return false;
+    // 進行方向に最も近いリンクを選択
+    let best = null, bestDiff = 999;
+    panoData.links.forEach(l => {
+      const diff = Math.abs(shortestDeltaDeg(desiredHeading, l.heading));
+      if (diff < bestDiff) { bestDiff = diff; best = l; }
+    });
+    // 進行方向に近いリンクがあれば、その先へ
+    if (best && bestDiff <= 45 && best.pano) {
+      if (best.pano !== lastPanoId) {
+        pano.setPano(best.pano);
+        lastPanoId = best.pano;
+        // 先でも視線を進行方向へ
+        setHeadingTo(desiredHeading);
+        return true;
+      }
+    }
+    return false;
+  }
+
   if ('geolocation' in navigator) {
     navigator.geolocation.watchPosition(pos => {
-      const { latitude, longitude, accuracy, speed } = pos.coords;
+      const { latitude, longitude, accuracy, speed, heading } = pos.coords;
       spd.textContent = (speed || 0).toFixed(1);
       st.textContent = `測位OK（±${Math.round(accuracy||0)}m）`;
 
       const here = { lat: latitude, lng: longitude };
-      sv.getPanorama({ location: here, radius: 70 }, (data, status) => {
+
+      // ★ 進行方向の決定
+      let course = null;
+      if (typeof heading === 'number' && heading >= 0 && (speed || 0) >= 3) {
+        // GPSのコース（速度が出ている時だけ信頼）
+        course = heading;
+      } else if (lastPos && (here.lat !== lastPos.lat || here.lng !== lastPos.lng)) {
+        // 自前のベアリング
+        course = bearing(lastPos.lat, lastPos.lng, here.lat, here.lng);
+      }
+      if (course != null) {
+        smoothedHeading = smoothAngle(smoothedHeading, course, 0.35);
+        hdgEl.textContent = smoothedHeading.toFixed(0);
+        setHeadingTo(smoothedHeading);
+      }
+
+      // ★ 近傍パノラマの取得（半径はやや広め）
+      sv.getPanorama({ location: here, radius: 100 }, (data, status) => {
         if (status === 'OK' && data?.location) {
           const panoId = data.location.pano;
           if (panoId !== lastPanoId) {
+            // まず最寄りにジャンプ
             pano.setPano(panoId);
             lastPanoId = panoId;
-            // 向きを仮に“自分→パノラマ中心”へ向ける
-            const loc = data.location.latLng;
-            const hd = Math.atan2(loc.lng() - here.lng, loc.lat() - here.lat) * 180 / Math.PI;
-            const pov = pano.getPov();
-            pano.setPov({ heading: hd || pov.heading, pitch: pov.pitch, zoom: 1 });
+          }
+          // 常に視線を進行方向へ
+          if (smoothedHeading != null) {
+            setHeadingTo(smoothedHeading);
+            // 車移動時：可能なら前方リンクへ進める
+            if ((speed || 0) >= 4) {
+              maybeFollowForwardLink(data, smoothedHeading);
+            }
           }
         } else {
           st.textContent = '近傍パノラマが見つかりません';
         }
       });
+
+      lastPos = here;
     }, err => {
       st.textContent = `測位エラー: ${err.message}`;
     }, { enableHighAccuracy: true, maximumAge: 1000, timeout: 15000 });
@@ -149,16 +235,18 @@ function init() {
     st.textContent = 'Geolocation未対応';
   }
 
-  // 端末の向きで視界を回す（iOSはユーザー操作で許可が必要）
-  const hdg = document.getElementById('hdg');
+  // —— 端末コンパスのフォールバック（停止中や低速時のみ使う想定） —— //
   function onOri(e) {
     let heading = (typeof e.webkitCompassHeading === 'number')
       ? e.webkitCompassHeading
       : (e.absolute && typeof e.alpha === 'number') ? 360 - e.alpha : null;
     if (heading != null) {
-      hdg.textContent = heading.toFixed(0);
-      const pov = pano.getPov();
-      pano.setPov({ heading, pitch: pov.pitch, zoom: pov.zoom });
+      // 低速時のみコンパスで補助（車内の磁気誤差を考慮）
+      if (!spd.textContent || parseFloat(spd.textContent) < 2.0) {
+        smoothedHeading = smoothAngle(smoothedHeading, heading, 0.25);
+        hdgEl.textContent = smoothedHeading.toFixed(0);
+        setHeadingTo(smoothedHeading);
+      }
     }
   }
   document.getElementById('btnMotion').addEventListener('click', () => {
@@ -172,30 +260,20 @@ function init() {
     }
   });
 
-  // —— タップ時のキャラ反応 —— //
+  // —— 既存のキャラ反応処理はそのまま —— //
   const boy = document.getElementById('boy');
   const dog = document.getElementById('dog');
-
   function bounce(el, cls) {
-    el.classList.remove(cls); // 連打再生用
-    // reflow
-    void el.offsetWidth;
-    el.classList.add(cls);
+    el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls);
     el.addEventListener('animationend', () => el.classList.remove(cls), { once: true });
   }
   function bubble(el, text) {
     const b = document.createElement('div');
-    b.className = 'bubble';
-    b.textContent = text;
-    el.appendChild(b);
+    b.className = 'bubble'; b.textContent = text; el.appendChild(b);
     setTimeout(() => b.remove(), 800);
   }
-
-  // 少年：ジャンプ＋「いこう！」
   boy.addEventListener('click',  () => { bounce(boy, 'react'); bubble(boy, 'いこう！'); });
   boy.addEventListener('touchend', (e) => { e.preventDefault(); bounce(boy, 'react'); bubble(boy, 'いこう！'); }, { passive:false });
-
-  // 犬：ぶんぶん＋「ワン！」
   dog.addEventListener('click',  () => { bounce(dog, 'react'); bubble(dog, 'ワン！'); });
   dog.addEventListener('touchend', (e) => { e.preventDefault(); bounce(dog, 'react'); bubble(dog, 'ワン！'); }, { passive:false });
 }
