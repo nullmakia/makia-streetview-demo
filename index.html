@@ -478,19 +478,25 @@ const dog = document.getElementById('dog');
     r.continuous = true;
     r.maxAlternatives = 1;
 
-    // 起動直後は（まだ一度もReadyを出していなければ）「準備中…」
-    r.onstart = () => { running = true; if (!everReadyShown) setPreparing("待機中"); };    // 実際に音が取り込まれたらReady
-    r.onaudiostart = () => setReady();
-    r.onsoundstart = () => setReady();
+    let srReadyTimer = null;
+    r.onstart = () => {
+      running = true;
+      if (!everReadyShown) setPreparing("待機中");
+      // ★ WebSpeech が音声イベントを出さない端末用の保険
+      srReadyTimer = setTimeout(() => setReady(), 2000);
+    };
+    const markReady = () => { if (srReadyTimer) { clearTimeout(srReadyTimer); srReadyTimer = null; } setReady(); };
+    r.onaudiostart = markReady;
+    r.onsoundstart = markReady;
 
     r.onend = () => {
       running = false;
+      if (srReadyTimer) { clearTimeout(srReadyTimer); srReadyTimer = null; }
       setTimeout(()=>{ try { r.start(); } catch {} }, 300);
     };
     r.onerror = (e) => {
-      // 許可が必要 / ジェスチャ必須など
       if (e.error === "not-allowed" || e.error === "service-not-allowed") {
-        requireUserTapOnce();
+        requireUserTapOnce(); // ここでテロップは setPreparing を呼ぶが、everReadyShown 済みなら変わりません
       }
     };
     r.onresult = (ev) => {
@@ -512,14 +518,31 @@ const dog = document.getElementById('dog');
         audio: { echoCancellation: true, noiseSuppression: true }
       });
     } catch (e) {
-      // 許可が必要 or ユーザージェスチャ必須
       requireUserTapOnce();
       return;
     }
+  
+    // ★ 権限が取れた＝もう話しかけられる状態 → Ready にしてOK
+    const [track] = stream.getAudioTracks();
+    if (track) {
+      if (track.muted) {
+        // 一部端末は最初 muted なので、unmute を待って Ready
+        track.onunmute = () => { setReady(); track.onunmute = null; };
+        // 念のための保険（2秒でReady）
+        setTimeout(() => setReady(), 2000);
+      } else {
+        setReady();
+      }
+    } else {
+      // 稀に tracks 無しで返る個体があるので保険
+      setTimeout(() => setReady(), 2000);
+    }
+  
     const m = new MediaRecorder(stream, { mimeType: "audio/webm" });
     chunks = [];
-
-    m.onstart = () => setReady(); // 本当に録音が始まった瞬間にReady
+    // onstart が来る端末ではここでも Ready 保険（実害なし）
+    m.onstart = () => setReady();
+  
     m.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
     m.onstop = async () => {
       if (!chunks.length) return;
@@ -537,7 +560,7 @@ const dog = document.getElementById('dog');
       } catch {}
       if (running) { try { m.start(2000); } catch {} }
     };
-
+  
     rec = m; running = true;
     try { m.start(2000); } catch {}
   }
