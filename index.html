@@ -32,9 +32,9 @@
   /* ↓ 少年の右横に寄せる：少年の左位置 + 少年の幅 + 隙間(6vw) */
   .dog {
     /* 少年 left(12vw) + 少年幅 + 隙間(3vw) → さらに左寄せ */
-    left: calc(6vw + min(20vw, 20px) + 3vw);
-    bottom: 10vh;
-    width: min(26vw, 200px);
+    left: calc(6vw + min(20vw, 100px) + 15vw);
+    bottom: 11vh;
+    width: min(15vw, 200px);
     aspect-ratio: 5/6;
     background: url('fool2.png') center / contain no-repeat;
   }
@@ -288,6 +288,35 @@ document.getElementById('btnCal').addEventListener('click', () => {
   // google.maps が来たら起動
   const ready = () => (window.google?.maps?.importLibrary) ? boot() : setTimeout(ready, 30);
   ready();
+</script>
+
+<script>
+// 反応アニメ & ふきだし
+function bounce(el, cls) {
+  el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls);
+  el.addEventListener('animationend', () => el.classList.remove(cls), { once:true });
+}
+function bubble(el, text) {
+  const b = document.createElement('div');
+  b.className = 'bubble'; b.textContent = text; el.appendChild(b);
+  setTimeout(() => b.remove(), 800);
+}
+
+// キャラにイベント付与（クリック & タッチ）
+const boy = document.getElementById('boy');
+const dog = document.getElementById('dog');
+
+['click','touchend'].forEach(type => {
+  boy.addEventListener(type, (e) => {
+    if (type === 'touchend') e.preventDefault();
+    bounce(boy, 'react'); bubble(boy, 'いこう！');
+  }, { passive:false });
+
+  dog.addEventListener(type, (e) => {
+    if (type === 'touchend') e.preventDefault();
+    bounce(dog, 'react'); bubble(dog, 'ワン！');
+  }, { passive:false });
+});
 </script>
 
 <!-- ★YOUR_API_KEY をあなたのキーに置き換え -->
