@@ -1,192 +1,200 @@
 <!doctype html>
 <html lang="ja">
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Step3 MediaRecorder → STT(任意)</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Street View × キャラ × 音声会話（Step3統合）</title>
+
 <style>
-  html,body{height:100%;margin:0;font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
-  main{min-height:100%;display:grid;place-items:center;padding:24px}
-  .card{max-width:760px;width:100%;border:1px solid #ddd;border-radius:14px;padding:18px;box-shadow:0 8px 24px rgba(0,0,0,.06);background:#fff}
-  button{padding:10px 14px;border-radius:10px;border:1px solid #111;background:#111;color:#fff;cursor:pointer}
-  .row{display:flex;gap:8px;flex-wrap:wrap}
-  pre{background:#f7f7f7;border:1px solid #eee;border-radius:10px;padding:10px;white-space:pre-wrap;min-height:2.5em}
-  .meter{height:8px;background:#eee;border-radius:999px;overflow:hidden}
-  .bar{height:100%;width:0%}
+  html, body, #pano { height: 100%; margin: 0; background: #000; }
+  #pano { position: fixed; inset: 0; z-index: 0; }
+
+  /* —— キャラ（前景） —— */
+  .sprite { position: fixed; z-index: 2000; pointer-events: auto; touch-action: manipulation;
+    filter: drop-shadow(0 8px 14px rgba(0,0,0,.35)); user-select: none; }
+  .boy { left: 12vw; bottom: 10vh; width: min(40vw, 320px); aspect-ratio: 5/6;
+    background: url('fool1.png') center / contain no-repeat; }
+  .dog { left: calc(6vw + min(20vw, 100px) + 15vw); bottom: 11vh; width: min(15vw, 200px); aspect-ratio: 5/6;
+    background: url('fool2.png') center / contain no-repeat; }
+
+  @keyframes boyJump { 0%{transform:translateY(0) rotate(0)}20%{transform:translateY(-14px) rotate(-2deg)}40%{transform:translateY(-22px) rotate(2deg)}60%{transform:translateY(-10px) rotate(-1deg)}100%{transform:translateY(0) rotate(0)} }
+  .boy.react { animation: boyJump .7s ease-out; }
+  @keyframes dogShake { 0%{transform:translateY(0) rotate(0)}15%{transform:translateY(-6px) rotate(-6deg)}30%{transform:translateY(-6px) rotate(6deg)}45%{transform:translateY(-6px) rotate(-6deg)}60%{transform:translateY(-2px) rotate(4deg)}100%{transform:translateY(0) rotate(0)} }
+  .dog.react { animation: dogShake .6s ease-out; }
+
+  .bubble{ position:absolute; left:50%; bottom:100%; transform:translateX(-50%); white-space:nowrap;
+    background:rgba(255,255,255,.95); color:#222; font:600 14px/1.2 system-ui,-apple-system,"Segoe UI",sans-serif;
+    padding:8px 10px; border-radius:14px; border:1px solid rgba(0,0,0,.15); box-shadow:0 6px 12px rgba(0,0,0,.18);
+    opacity:0; animation:pop .75s ease forwards; z-index: 20; }
+  @keyframes pop { 0%{transform:translate(-50%,6px) scale(.9); opacity:0}40%{transform:translate(-50%,0) scale(1); opacity:1}90%{opacity:1}100%{opacity:0} }
+
+  /* HUD / テロップ / マイクボタン */
+  .hud { position: fixed; top: 12px; left: 12px; z-index: 3000; color: #fff; text-shadow:0 1px 3px rgba(0,0,0,.6) }
+  #aiTelopBox{ position:fixed; left:12px; right:12px; bottom:12px; padding:10px 12px; background:rgba(255,255,255,.92);
+    border:1px solid #e5e5e5; border-radius:12px; backdrop-filter:blur(4px); box-shadow:0 4px 18px rgba(0,0,0,.12);
+    z-index:4000; font-size:14px; }
+  #micBtn{ position:fixed; right:12px; bottom:80px; z-index:4001; padding:10px 12px; border:1px solid #111;
+    background:#111; color:#fff; border-radius:10px; }
+  #stopBtn{ position:fixed; right:12px; bottom:38px; z-index:4001; padding:10px 12px; border:1px solid #111;
+    background:#444; color:#fff; border-radius:10px; }
+
+  .meter{ position:fixed; left:12px; right:120px; bottom:54px; height:8px; background:rgba(255,255,255,.5);
+    border-radius:999px; overflow:hidden; z-index:4001 }
+  .bar{ height:100%; width:0% }
 </style>
-<main>
-  <div class="card">
-    <h1>🎤 Step3: MediaRecorder で録音 →（任意）STT</h1>
-    <div class="row">
-      <button id="start">録音開始</button>
-      <button id="stop" disabled>■ 停止</button>
-      <button id="clear">表示クリア</button>
-    </div>
-    <p>入力レベル:</p>
-    <div class="meter"><div id="bar" class="bar"></div></div>
 
-    <h3>結果</h3>
-    <p>録音ファイル:</p>
-    <div id="audioBox">（まだありません）</div>
+<body>
+  <div id="pano" aria-label="Street View 背景"></div>
 
-    <p>STTテキスト（任意・STT_ENDPOINT設定時）:</p>
-    <pre id="text"></pre>
+  <!-- 前景キャラ -->
+  <div class="sprite boy" id="boy"></div>
+  <div class="sprite dog" id="dog"></div>
 
-    <p>ログ:</p>
-    <pre id="log">準備完了</pre>
-
-    <small>
-      • まず保存・再生まで確認 → OKなら <code>STT_ENDPOINT</code> をあなたのWorker等に差し替え。<br>
-      • iOS/Safari は <code>audio/mp4</code> 系になることがあります。<br>
-      • 埋め込み表示で使う場合は <code>&lt;iframe allow="microphone"&gt;</code> が必要。
-    </small>
+  <!-- HUD -->
+  <div class="hud">
+    <div>状態: <span id="st">初期化中…</span></div>
+    <div>速度: <span id="spd">0.0</span> m/s　方位: <span id="hdg">—</span>°</div>
   </div>
-</main>
+
+  <!-- テロップ / マイク -->
+  <div id="aiTelopBox"><span id="aiTelop">タップで開始</span></div>
+  <button id="micBtn">🎤 マイクを開始</button>
+  <button id="stopBtn" disabled>■ 停止</button>
+  <div class="meter"><div id="levelBar" class="bar"></div></div>
 
 <script>
-const $  = (id)=>document.getElementById(id);
-const log= (m)=>{$("log").textContent = String(m)}
+/***** 設定（あなたのWorkerのエンドポイントに差し替え） *****/
+const WORKER_BASE = "https://makia-animator.animator.workers.dev"; // 例
+const STT_URL = WORKER_BASE + "/stt";        // 音声→テキスト（Step3のバッチ）
+const CHAT_URL = WORKER_BASE + "/chat";       // テキスト→会話応答（ストリーミング可）
 
-const STT_ENDPOINT = ""; // 例: "https://xxxxx.workers.dev/stt"（空のままでもOK）
+/***** テロップ *****/
+const telop = document.getElementById("aiTelop");
+const stHud = document.getElementById("st");
+function setTelop(t){ telop.textContent = t; stHud.textContent = t; }
 
-let stream=null, rec=null, chunks=[], analyser=null, raf=0;
+/***** キャラの反応 *****/
+function bounce(el, cls){ el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls);
+  el.addEventListener('animationend', ()=> el.classList.remove(cls), { once:true }); }
+function bubble(el, text){ const b=document.createElement('div'); b.className='bubble'; b.textContent=text; el.appendChild(b); setTimeout(()=>b.remove(), 800); }
+['click','touchend'].forEach(type => {
+  boy.addEventListener(type, e=>{ if(type==='touchend') e.preventDefault(); bounce(boy,'react'); bubble(boy,'いこう！'); }, {passive:false});
+  dog.addEventListener(type, e=>{ if(type==='touchend') e.preventDefault(); bounce(dog,'react'); bubble(dog,'ワン！'); }, {passive:false});
+});
 
-// 使える MIME を選ぶ（ブラウザに任せる安全策）
-function pickAudioMime(){
-  const cands=[
-    "audio/webm;codecs=opus",
-    "audio/webm",
-    "audio/mp4;codecs=mp4a.40.2",
-    "audio/mp4"
-  ];
-  if (!window.MediaRecorder?.isTypeSupported) return "";
-  for (const t of cands) if (MediaRecorder.isTypeSupported(t)) return t;
-  return "";
+/***** Street View（最小起動） *****/
+window.pano = null; window.sv = null;
+const FALLBACK = { lat: 35.6595, lng: 139.7005 };
+function showNearestPanorama(location, radius=150){
+  window.sv.getPanorama({ location, radius }, (data, status) => {
+    if (status === 'OK' && data?.location) { window.pano.setPano(data.location.pano); }
+  });
 }
-
-async function preflight(){
-  const s = await navigator.mediaDevices.getUserMedia({audio:true});
-  s.getTracks().forEach(t=>t.stop());
-}
-
-function startLevelMeter(stream){
-  const ac = new (window.AudioContext||window.webkitAudioContext)();
-  const src = ac.createMediaStreamSource(stream);
-  analyser = ac.createAnalyser();
-  analyser.fftSize = 1024;
-  src.connect(analyser);
-
-  const data = new Uint8Array(analyser.frequencyBinCount);
-  const bar  = $("bar");
-  function tick(){
-    analyser.getByteTimeDomainData(data);
-    // 波形の振幅からざっくりレベル算出
-    let sum=0;
-    for (let i=0;i<data.length;i++){
-      const v = (data[i]-128)/128;
-      sum += v*v;
-    }
-    const rms = Math.sqrt(sum/data.length); // 0..1
-    bar.style.width = Math.min(100, Math.round(rms*180)) + "%";
-    raf = requestAnimationFrame(tick);
+async function bootMaps(){
+  await google.maps.importLibrary("maps");
+  await google.maps.importLibrary("streetView");
+  window.sv = new google.maps.StreetViewService();
+  window.pano = new google.maps.StreetViewPanorama(document.getElementById('pano'),{
+    addressControl:false, fullscreenControl:false, motionTracking:false, disableDefaultUI:true, visible:true
+  });
+  showNearestPanorama(FALLBACK, 200);
+  if ('geolocation' in navigator) {
+    navigator.geolocation.watchPosition(pos=>{
+      const { latitude, longitude, accuracy, speed } = pos.coords;
+      const spdEl = document.getElementById('spd'); if (spdEl) spdEl.textContent = (speed||0).toFixed(1);
+      showNearestPanorama({lat:latitude,lng:longitude}, 150);
+    });
   }
-  tick();
+}
+(function ready(){ if (window.google?.maps?.importLibrary) bootMaps(); else setTimeout(ready, 30); })();
+
+/***** Step3：MediaRecorder 録音 → STT → 会話API *****/
+let stream=null, rec=null, chunks=[], stopLevel=null;
+const micBtn = document.getElementById('micBtn');
+const stopBtn= document.getElementById('stopBtn');
+
+function pickAudioMime(){
+  const c=["audio/webm;codecs=opus","audio/webm","audio/mp4;codecs=mp4a.40.2","audio/mp4"]; 
+  if(!window.MediaRecorder?.isTypeSupported) return ""; 
+  for (const t of c) if (MediaRecorder.isTypeSupported(t)) return t; 
+  return ""; }
+
+// 入力レベルメーター
+function startLevelMeter(stream){
+  const AC = window.AudioContext || window.webkitAudioContext; const ac = new AC();
+  const src = ac.createMediaStreamSource(stream); const an = ac.createAnalyser(); an.fftSize=1024; src.connect(an);
+  const data = new Uint8Array(an.frequencyBinCount); const bar = document.getElementById('levelBar'); let raf=0;
+  (function tick(){ an.getByteTimeDomainData(data); let sum=0; for(let i=0;i<data.length;i++){ const v=(data[i]-128)/128; sum+=v*v; }
+    const rms = Math.sqrt(sum/data.length); bar.style.width = Math.min(100, Math.round(rms*180)) + "%"; raf=requestAnimationFrame(tick); })();
   return ()=>{ cancelAnimationFrame(raf); ac.close(); };
 }
 
-function attachAudio(blob){
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("audio");
-  a.controls = true;
-  a.src = url;
-
-  const dl = document.createElement("a");
-  dl.textContent = "📥 ダウンロード";
-  dl.href = url;
-  const ext = (blob.type.includes("mp4")?"m4a":(blob.type.includes("webm")?"webm":"bin"));
-  dl.download = "recording."+ext;
-
-  const box = $("audioBox");
-  box.innerHTML = "";
-  box.append(a," ",dl);
+async function preflightMic(){
+  const s = await navigator.mediaDevices.getUserMedia({ audio:true }); s.getTracks().forEach(t=>t.stop());
 }
 
-async function maybeSendToSTT(blob){
-  if (!STT_ENDPOINT){ log("STT未設定（録音は成功）"); return; }
-  log("STT送信中…");
-  try{
-    const res = await fetch(STT_ENDPOINT,{
-      method:"POST",
-      headers:{ "Content-Type": blob.type || "application/octet-stream" },
-      body: await blob.arrayBuffer()
-    });
-    if (!res.ok) throw new Error("HTTP "+res.status);
-    const j = await res.json().catch(()=>null);
-    const text = j?.text ?? j?.result ?? "";
-    $("text").textContent = text || "(空)";
-    log("STT完了");
-  }catch(e){
-    log("STT失敗: "+ (e?.message||e));
-  }
+async function sendToSTT(blob){
+  const res = await fetch(STT_URL, { method:'POST', headers:{ 'Content-Type': blob.type || 'application/octet-stream' }, body: await blob.arrayBuffer() });
+  if (!res.ok) throw new Error('STT HTTP '+res.status); const j = await res.json().catch(()=>({text:''})); return j.text || j.result || '';
 }
 
-$("start").addEventListener("click", async ()=>{
-  $("text").textContent = "";
-  $("audioBox").textContent = "録音中…";
-  $("stop").disabled = true;
-
-  if (!isSecureContext) return log("HTTPSで開いてください（isSecureContext=false）");
-  if (!navigator.mediaDevices?.getUserMedia) return log("未対応：getUserMedia");
-  if (!window.MediaRecorder) return log("未対応：MediaRecorder");
-
+async function askChat(text){
   try{
-    log("権限を取得中…");
-    await preflight(); // 許可ダイアログ
-  }catch(e){
-    return log("権限取得失敗: "+(e?.name||e));
-  }
+    const res = await fetch(CHAT_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({
+      model:"gpt-4o-mini", stream:true,
+      messages:[ {role:"system", content:"あなたは元気な少年キャラ『Fool』です。短い日本語セリフで返答。敬称不要。絵文字は控えめ。"}, {role:"user", content:text} ]
+    }) });
+    if (!res.ok || !res.body){ setTelop("接続エラー("+res.status+")"); return; }
+    setTelop(""); const reader = res.body.getReader(); const dec = new TextDecoder(); let buf="";
+    for(;;){ const {value,done} = await reader.read(); if(done) break; buf += dec.decode(value,{stream:true}); let nl; while((nl = buf.indexOf("\n"))>=0){
+        const line = buf.slice(0,nl).trim(); buf = buf.slice(nl+1); if(!line.startsWith("data:")) continue; const payload=line.slice(5).trim(); if(payload==="[DONE]") {buf=""; break;}
+        try{ const j = JSON.parse(payload); const delta = j?.choices?.[0]?.delta?.content || ""; if(delta) telop.textContent += delta; }catch{}
+    } }
+  }catch(e){ setTelop("通信エラー: "+(e?.message||e)); }
+}
 
-  try{
-    log("録音初期化…");
-    stream = await navigator.mediaDevices.getUserMedia({audio:true});
-    const mime = pickAudioMime();
-    rec = mime ? new MediaRecorder(stream,{mimeType:mime}) : new MediaRecorder(stream);
-  }catch(e){
-    return log("録音開始失敗: "+(e?.name||e));
-  }
+async function startRecording(){
+  if (!isSecureContext) { setTelop('HTTPSで開いてください'); return; }
+  if (!navigator.mediaDevices?.getUserMedia) { setTelop('getUserMedia未対応'); return; }
 
-  // レベルメーター
-  const stopMeter = startLevelMeter(stream);
+  setTelop('権限取得中…');
+  try{ await preflightMic(); }catch(e){ setTelop('権限取得失敗'); return; }
 
-  chunks = [];
-  rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
-  rec.onstart = ()=>{ $("stop").disabled = false; log("録音中…話しかけてください"); };
-  rec.onstop = async ()=>{
-    try{ stopMeter(); }catch{}
-    stream.getTracks().forEach(t=>t.stop());
-    const type = rec.mimeType || (chunks[0] && chunks[0].type) || "audio/webm";
+  setTelop('録音初期化…');
+  try{ stream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:true, noiseSuppression:true, autoGainControl:true, channelCount:1 } }); }
+  catch(e){ setTelop('録音用ストリーム失敗'); return; }
+
+  try{ stopLevel = startLevelMeter(stream); }catch{}
+
+  const mime = pickAudioMime();
+  try{ rec = mime ? new MediaRecorder(stream,{mimeType:mime}) : new MediaRecorder(stream); }
+  catch(e){ setTelop('MediaRecorder作成失敗'); return; }
+
+  chunks=[];
+  rec.ondataavailable = e=>{ if(e.data && e.data.size) chunks.push(e.data); };
+  rec.onstart = ()=>{ setTelop('録音中…話しかけてね'); stopBtn.disabled = false; micBtn.disabled = true; };
+  rec.onstop  = async ()=>{
+    stopBtn.disabled = true; micBtn.disabled = false;
+    try{ stopLevel && stopLevel(); }catch{} try{ stream.getTracks().forEach(t=>t.stop()); }catch{}
+    const type = rec.mimeType || (chunks[0] && chunks[0].type) || 'audio/webm';
     const blob = new Blob(chunks,{type});
-    attachAudio(blob);
-    log("録音停止。ファイルを再生/保存できます。");
-    // 任意：STTへ
-    maybeSendToSTT(blob);
+    setTelop('STT送信中…');
+    let text = '';
+    try{ text = await sendToSTT(blob); }catch(e){ setTelop('STT失敗'); return; }
+    if (!text) { setTelop('（聞き取れなかったかも）'); return; }
+    // キャラの吹き出し＆Chat へ
+    telop.textContent = '…考え中'; await askChat(text);
   };
+  try{ rec.start(2000); }catch(e){ setTelop('rec.start失敗'); }
+}
 
-  try{
-    rec.start(2000); // 2秒チャンク
-  }catch(e){
-    log("rec.start失敗: "+(e?.name||e));
-  }
-});
+micBtn.addEventListener('click', startRecording);
+stopBtn.addEventListener('click', ()=>{ try{ rec && rec.stop(); }catch{} });
 
-$("stop").addEventListener("click", ()=>{
-  $("stop").disabled = true;
-  try{ rec && rec.stop(); }catch{}
-});
-
-$("clear").addEventListener("click", ()=>{
-  $("text").textContent="";
-  $("audioBox").textContent="（クリアしました）";
-  log("準備完了");
-});
+/***** 便利：ページ離脱で停止 *****/
+window.addEventListener('pagehide', ()=>{ try{ rec && rec.stop(); }catch{} try{ stream && stream.getTracks().forEach(t=>t.stop()); }catch{} });
 </script>
+
+<!-- ★YOUR_API_KEY をあなたのキーに置き換え -->
+<script async src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAQQHZONAJ27HZwG20IJbRYZXZ6ADxbtP0&v=weekly"></script>
+</body>
 </html>
