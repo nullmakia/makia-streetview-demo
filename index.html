@@ -2,56 +2,91 @@
 <html lang="ja">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Step1 Mic Permission Only</title>
+<title>Step2 SpeechRecognition Only</title>
 <style>
   html,body{height:100%;margin:0;font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
   main{min-height:100%;display:grid;place-items:center;padding:24px}
-  .card{max-width:640px;width:100%;border:1px solid #ddd;border-radius:14px;padding:18px;box-shadow:0 8px 24px rgba(0,0,0,.06);background:#fff}
+  .card{max-width:700px;width:100%;border:1px solid #ddd;border-radius:14px;padding:18px;box-shadow:0 8px 24px rgba(0,0,0,.06);background:#fff}
   button{padding:10px 14px;border-radius:10px;border:1px solid #111;background:#111;color:#fff;cursor:pointer}
-  pre{background:#f7f7f7;border:1px solid #eee;border-radius:10px;padding:10px;white-space:pre-wrap}
-  code{background:#f2f2f2;padding:2px 4px;border-radius:6px}
+  pre{background:#f7f7f7;border:1px solid #eee;border-radius:10px;padding:10px;white-space:pre-wrap;min-height:2.5em}
+  .row{display:flex;gap:8px;flex-wrap:wrap}
 </style>
 <main>
   <div class="card">
-    <h1>🎤 Step1: マイク許可テスト</h1>
-    <p>ボタンを押すと <code>getUserMedia({audio:true})</code> を<strong>1回だけ</strong>実行し、許可後は即停止します。</p>
-    <p><button id="btn">🎤 マイク権限をリクエスト</button></p>
+    <h1>🎤 Step2: 許可後に Web Speech API だけ試す</h1>
+    <div class="row">
+      <button id="start">① 権限を取ってから開始</button>
+      <button id="stop" disabled>■ 停止</button>
+    </div>
+    <p>結果:</p>
     <pre id="log">準備完了</pre>
-    <ul>
-      <li>HTTPS 必須（GitHub Pages はOK）</li>
-      <li>もしダイアログが出ない → ブラウザの「サイトの設定」でこのドメインのマイクがブロックになっていないか確認</li>
-    </ul>
+    <p>最終テキスト:</p>
+    <pre id="text"></pre>
+    <small>対応: Chrome/Edge（PC/Android）。iOS系(WKWebView系含む)は <code>SpeechRecognition</code> が不安定/未実装のことが多い。</small>
   </div>
 </main>
 <script>
-const logEl = document.getElementById("log");
-const log = (m) => logEl.textContent = m;
+const $ = (id) => document.getElementById(id);
+const log = (m) => $("log").textContent = m;
 
-document.getElementById("btn").addEventListener("click", async () => {
-  if (!navigator.mediaDevices?.getUserMedia) return log("未対応：getUserMedia");
+async function preflightMicPermission() {
+  const s = await navigator.mediaDevices.getUserMedia({ audio:true });
+  s.getTracks().forEach(t => t.stop());
+}
+
+let recog = null, running = false;
+
+$("start").addEventListener("click", async () => {
+  $("text").textContent = "";
   if (!isSecureContext) return log("HTTPSで開いてください（isSecureContext=false）");
+  if (!navigator.mediaDevices?.getUserMedia) return log("未対応：getUserMedia");
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return log("未対応：SpeechRecognition");
 
-  log("マイク権限をリクエスト中…");
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    stream.getTracks().forEach(t => t.stop());
-
-    // Permission API（対応ブラウザのみ）
-    let state = "unknown";
-    try {
-      const p = await navigator.permissions.query({ name:"microphone" });
-      state = p.state;
-    } catch {}
-    log(`✅ 許可されました（permissions.state=${state}）`);
+    log("① マイク権限を取得中…");
+    await preflightMicPermission(); // ← ここで必ず許可ダイアログ
   } catch (e) {
-    const n = e?.name || "Error";
-    const msg =
-      n === "NotAllowedError" ? "❌ 拒否/ブロック（サイト設定で『マイク: 許可』へ）" :
-      n === "NotFoundError"    ? "❌ マイク未接続/無効" :
-      n === "NotReadableError" ? "❌ 別アプリがマイク占有中" :
-      `❌ 失敗: ${n}`;
-    log(msg);
+    return log("権限取得に失敗: " + (e?.name || e));
   }
+
+  log("② 音声認識を開始…");
+  try {
+    const r = new SR();
+    recog = r;
+    r.lang = "ja-JP";
+    r.continuous = true;
+    r.interimResults = false;
+    r.maxAlternatives = 1;
+
+    r.onstart = () => { running = true; log("認識 onstart"); $("stop").disabled = false; };
+    r.onaudiostart = () => log("認識 onaudiostart");
+    r.onsoundstart = () => log("認識 onsoundstart");
+    r.onspeechstart= () => log("認識 onspeechstart");
+    r.onspeechend  = () => log("認識 onspeechend");
+    r.onsoundend   = () => log("認識 onsoundend");
+    r.onaudioend   = () => log("認識 onaudioend");
+    r.onend = () => { running = false; log("認識 onend（自動終了）"); $("stop").disabled = true; };
+    r.onerror = (e) => log("認識 onerror: " + e.error);
+
+    r.onresult = (ev) => {
+      let final = "";
+      for (let i = ev.resultIndex; i < ev.results.length; i++) {
+        if (ev.results[i].isFinal) final += ev.results[i][0].transcript;
+      }
+      if (final) $("text").textContent += (final + "\n");
+    };
+
+    r.start(); // ここで失敗するなら iOS/WKWebView の可能性高
+  } catch (e) {
+    log("start例外: " + (e?.name || e));
+  }
+});
+
+$("stop").addEventListener("click", () => {
+  try { recog && recog.stop && recog.stop(); } catch {}
+  $("stop").disabled = true;
+  log("停止指示");
 });
 </script>
 </html>
