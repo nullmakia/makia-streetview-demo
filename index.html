@@ -395,15 +395,18 @@ const dog = document.getElementById('dog');
   const setTelop = (t) => { telop.textContent = t };
   const MIN_PREP_MS = 1500;
   let prepStartedAt = 0;
+  let everReadyShown = false;
 
   const setPreparing = (why = "") => {
     prepStartedAt = performance.now();
-    setTelop("準備中…" + (why ? `（${why}）` : ""));
+    if (!everReadyShown) {
+      setTelop("準備中…" + (why ? `（${why}）` : ""));
+    }
   };
   const setReady = () => {
+    const show = () => { setTelop("話しかけてね！"); everReadyShown = true; };
     const rest = MIN_PREP_MS - (performance.now() - prepStartedAt);
-    if (rest > 0) setTimeout(() => setTelop("話しかけてね！"), rest);
-    else setTelop("話しかけてね！");
+    if (rest > 0) setTimeout(show, rest); else show();
   };
 
   // ====== 音声→文字 & チャット ======
@@ -475,17 +478,14 @@ const dog = document.getElementById('dog');
     r.continuous = true;
     r.maxAlternatives = 1;
 
-    // 起動直後は準備中のまま
-    r.onstart = () => { running = true; setPreparing("待機中"); };
-    // 実際に音が取り込まれたらReady
+    // 起動直後は（まだ一度もReadyを出していなければ）「準備中…」
+    r.onstart = () => { running = true; if (!everReadyShown) setPreparing("待機中"); };    // 実際に音が取り込まれたらReady
     r.onaudiostart = () => setReady();
     r.onsoundstart = () => setReady();
 
     r.onend = () => {
       running = false;
-      setPreparing("待機中");
-      // 自動再開（ブラウザが許す限り）
-      setTimeout(()=>{ try { r.start(); } catch {} }, 200);
+      setTimeout(()=>{ try { r.start(); } catch {} }, 300);
     };
     r.onerror = (e) => {
       // 許可が必要 / ジェスチャ必須など
@@ -507,7 +507,7 @@ const dog = document.getElementById('dog');
 
   async function startMediaRecorder(userGesture = false) {
     try {
-      setPreparing(userGesture ? "マイク初期化中" : "マイク初期化中");
+      if (!everReadyShown) setPreparing("マイク初期化中");
       stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true }
       });
