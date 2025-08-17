@@ -261,7 +261,39 @@ document.getElementById('btnCal').addEventListener('click', () => {
   headingOffset = norm360((smoothedHeading ?? lastDeviceHeading) - lastDeviceHeading);
 });
 </script>
+<script>
+async function preflightMicPermission() {
+  try {
+    const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // 許可確認だけなので即停止
+    s.getTracks().forEach(t => t.stop());
+    return true;
+  } catch (e) {
+    // 既存のラベル関数を流用
+    setTelop(humanReadableMicError(e));
+    return false;
+  }
+}
 
+micBtn.addEventListener("click", async () => {
+  if (!running) {
+    // ★ ここで標準ダイアログを出す（必ずユーザー操作同期内で await）
+    const ok = await preflightMicPermission();
+    if (!ok) return;
+
+    keepAlive = true;
+    telop.textContent = "マイク初期化中…";
+    startListening(true);      // 以降は従来どおり
+    updateMicUI(true);
+  } else {
+    keepAlive = false;
+    stopListening();
+    telop.textContent = "停止中";
+    updateMicUI(false);
+    everReadyShown = false;
+  }
+});
+</script>
 <script type="module">
   // ===== Street View 起動（importLibrary 方式） =====
   const FALLBACK = { lat: 35.6595, lng: 139.7005 }; // 渋谷駅周辺を保険として
