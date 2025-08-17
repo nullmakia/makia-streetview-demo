@@ -31,9 +31,9 @@
   }
   /* ↓ 少年の右横に寄せる：少年の左位置 + 少年の幅 + 隙間(6vw) */
   .dog {
-    left: calc(12vw + min(40vw, 30px) + 6vw);
+    left: calc(15vw + min(40vw, 30px) + 20vw);
     bottom: 10vh;
-    width: min(26vw, 220px);
+    width: min(15vw, 160px);
     aspect-ratio: 5/6;
     background: url('fool2.png') center / contain no-repeat;
   }
@@ -105,12 +105,12 @@
   </div>
 
 <!-- 画面にトグルとキャリブレーションを追加 -->
-<button id="btnGyro" style="position:fixed;right:8px;bottom:64px;z-index:1000;">🎯 ジャイロOFF</button>
+<button id="btnGyro" style="position:fixed;right:8px;bottom:64px;z-index:1000;">🎯 ジャイロON</button>
 <button id="btnCal"  style="position:fixed;right:8px;bottom:28px;z-index:1000;">↻ 方向校正</button>
 
 <script>
 // 既存の変数に追加
-let gyroMode = false;           // ジャイロで視線を制御するか
+let gyroMode = true;           // ジャイロで視線を制御するか
 let headingOffset = 0;          // 校正用オフセット（度）
 let smoothedHeading = null;     // 既存の平滑化済みヘディングを再利用
 let lastDeviceHeading = null;   // 端末からの最新ヘディング
@@ -212,6 +212,22 @@ document.getElementById('btnGyro').addEventListener('click', async () => {
   }
 });
 
+// ★ ページ読み込み時にジャイロを自動有効化（iOS以外）
+(async function autoEnableGyroAtBoot(){
+  const C = window.DeviceOrientationEvent;
+  if (!C) return;
+  try {
+    if (typeof C.requestPermission === 'function') {
+      // iOSはユーザー操作が必要なので、ここでは要求しない（ボタンで許可）
+      document.getElementById('btnGyro').textContent = '🎯 ジャイロON';
+    } else {
+      // Android/PCは自動購読
+      window.addEventListener('deviceorientation', onDeviceOrientation, true);
+      document.getElementById('btnGyro').textContent = '🎯 ジャイロON';
+    }
+  } catch {}
+})();
+
 // 現在の向きを「正面」に校正（端末を向けた方向を0°とみなす）
 document.getElementById('btnCal').addEventListener('click', () => {
   if (lastDeviceHeading == null) return;
@@ -287,6 +303,27 @@ document.getElementById('btnCal').addEventListener('click', () => {
   // google.maps が来たら起動
   const ready = () => (window.google?.maps?.importLibrary) ? boot() : setTimeout(ready, 30);
   ready();
+</script>
+
+<script>
+// ----- キャラのタップ反応（復活） -----
+function bounce(el, cls) {
+  el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls);
+  el.addEventListener('animationend', () => el.classList.remove(cls), { once:true });
+}
+function bubble(el, text) {
+  const b = document.createElement('div');
+  b.className = 'bubble'; b.textContent = text; el.appendChild(b);
+  setTimeout(() => b.remove(), 800);
+}
+const boy = document.getElementById('boy');
+const dog = document.getElementById('dog');
+['click','touchend'].forEach(ev=>{
+  boy.addEventListener(ev, (e)=>{ if(ev==='touchend') e.preventDefault();
+    bounce(boy,'react'); bubble(boy,'いこう！'); }, {passive:false});
+  dog.addEventListener(ev, (e)=>{ if(ev==='touchend') e.preventDefault();
+    bounce(dog,'react'); bubble(dog,'ワン！'); }, {passive:false});
+});
 </script>
 
 <!-- ★YOUR_API_KEY をあなたのキーに置き換え -->
