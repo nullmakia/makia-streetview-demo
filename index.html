@@ -457,15 +457,13 @@ const dog = document.getElementById('dog');
   let rec = null, stream = null, chunks = [], usingSpeechAPI = false, running = false, lastText = "", askedTap = false;
 
   function requireUserTapOnce(hint = "マイク許可が必要。画面を1回タップしてね") {
-    if (askedTap) return;
     askedTap = true;
-    setPreparing(hint);
+    setTelop(hint);   // ← setPreparingではなく直接setTelopにする
     const once = async () => {
       document.removeEventListener("pointerdown", once, { capture: true });
-      setPreparing("マイク初期化中");
-      await startListening(true); // userGesture = true
+      setTelop("マイク初期化中…");
+      await startListening(true);
     };
-    // capture で確実に最初のタップを取る
     document.addEventListener("pointerdown", once, { once: true, capture: true });
   }
 
