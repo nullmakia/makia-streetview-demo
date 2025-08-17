@@ -103,6 +103,45 @@
     position:fixed; right:12px; bottom:80px; z-index:4001;
     padding:10px 12px; border:1px solid #111; background:#111; color:#fff; border-radius:10px;
   }
+  /* === 吹き出し（Fool の返答）=== */
+  #foolBalloon {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    max-width: 92vw;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 14px;
+    padding: 10px 12px;
+    box-shadow: 0 6px 20px rgba(0,0,0,.14);
+    font-size: 14px;
+    line-height: 1.5;
+    z-index: 4000;
+  }
+  #foolBalloon .name {
+    display: inline-block; font-weight: 700; margin-right: 6px;
+    background: #111; color: #fff; padding: 2px 8px; border-radius: 999px; font-size: 12px;
+  }
+  #foolBalloon:after {
+    content: ""; position: absolute; left: 20px; bottom: -8px;
+    border-width: 8px 8px 0 8px; border-style: solid;
+    border-color: #fff transparent transparent transparent;
+    filter: drop-shadow(0 -1px 0 rgba(0,0,0,.08));
+  }
+  /* マイク許可のオーバーレイ（必要時のみ表示） */
+  #micPerm {
+    position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+    background: rgba(0,0,0,.35); z-index: 5000;
+  }
+  #micPerm .box {
+    background:#fff; padding:16px 18px; border-radius:12px; max-width: 90vw; text-align:center;
+    box-shadow:0 8px 28px rgba(0,0,0,.2); font-size:14px;
+  }
+  #micPerm button {
+    margin-top:10px; padding:10px 12px; border-radius:10px; border:1px solid #111; background:#111; color:#fff;
+  }
+
 </style>
 
 <body>
@@ -117,22 +156,19 @@
   <div class="hud">
     <div>状態: <span id="st">初期化中…</span></div>
     <div>速度: <span id="spd">0.0</span> m/s　方位: <span id="hdg">—</span>°</div>
-    <div style="margin-top:6px">
-      <button id="btnMotion">モーション許可（iOS）</button>
-    </div>
-    <!-- ← ここにAI結果を移動 -->
-    <div style="margin-top:6px">
-      <strong>AI:</strong> <span id="aiResult">接続テスト中…</span>
-    </div>
   </div>
-  <!-- テロップ表示枠 -->
-  <div id="aiTelopBox"><span class="label">Fool：</span><span id="aiTelop">準備中…</span></div>
-  <!-- ユーザー操作でマイク開始（iOS/Safari 対策） -->
-  <button id="micStart" title="長押し不要・一度押せば連続で聞きます">🎤 マイク開始</button>
   <!-- 画面にトグルとキャリブレーションを追加 -->
   <button id="btnGyro" style="position:fixed;right:8px;bottom:64px;z-index:1000;">🎯 ジャイロOFF</button>
   <button id="btnCal"  style="position:fixed;right:8px;bottom:28px;z-index:1000;">↻ 方向校正</button>
+  <div id="foolBalloon"><span class="name">Fool</span><span id="aiTelop">準備中…</span></div>
 
+  <!-- 自動開始がブロックされた場合だけ出す（iOS Safari想定） -->
+  <div id="micPerm" aria-hidden="true">
+    <div class="box">
+      🎤 マイクを有効化してください（1回だけタップ）<br>
+      <button id="enableMic">マイクを許可して開始</button>
+    </div>
+  </div>
 <script>
 // 既存の変数に追加
 let gyroMode = false;           // ジャイロで視線を制御するか
@@ -371,35 +407,54 @@ const dog = document.getElementById('dog');
 </script>
 <script>
 (() => {
-  // ← あなたの Worker の実URLに必ず置換（末尾は /chat）
-  const WORKER_CHAT = "https://makia-animator.animator.workers.dev/chat";
+  // ← 必ずあなたの実URLに（末尾 /chat と /stt）
+  const WORKER_BASE = "https://makia-animator.animator.workers.dev";
+  const CHAT_URL = WORKER_BASE + "/chat";
+  const STT_URL  = WORKER_BASE + "/stt";
 
-  const telopEl = document.getElementById("aiTelop");
-  const micBtn  = document.getElementById("micStart");
+  const telop = document.getElementById("aiTelop");
+  const perm  = document.getElementById("micPerm");
+  const btn   = document.getElementById("enableMic");
 
-  // --- OpenAI返答をSSEで受け取りながらテロップに流す ---
+  const setTelop = (t) => { telop.textContent = t };
+
+  // 準備中を最低この時間は表示（必要に応じて調整）
+  const MIN_PREP_MS = 1500; // ← 1.5秒。もっと長くしたければ 2000~2500 などに
+  let prepStartedAt = 0;
+
+  const setPreparing = (why = "") => {
+    prepStartedAt = performance.now();
+    setTelop("準備中…" + (why ? `（${why}）` : ""));
+  };
+
+  const setReady = () => {
+    const elapsed = performance.now() - prepStartedAt;
+    const rest = MIN_PREP_MS - elapsed;
+    if (rest > 0) {
+      setTimeout(() => setTelop("話しかけてね！"), rest);
+    } else {
+      setTelop("話しかけてね！");
+    }
+  };
+
+  // ==== 返答をSSEで逐次テロップ ====
   async function askChat(userText) {
     try {
-      // 送信（SSE）
-      const res = await fetch(WORKER_CHAT, {
+      const res = await fetch(CHAT_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "gpt-4o-mini",
           stream: true,
           messages: [
-            { role: "system", content: "あなたは元気な少年キャラ『Fool』です。日本語で短いセリフで返答してください。" },
+            { role: "system", content: "あなたは元気な少年キャラ『Fool』です。短い日本語セリフで返答。敬称は不要。絵文字は控えめ。" },
             { role: "user", content: userText }
           ]
         })
       });
-      if (!res.ok || !res.body) {
-        telopEl.textContent = "エラー: " + (res.status || "接続失敗");
-        return;
-      }
+      if (!res.ok || !res.body) { telop.textContent = "接続エラー(" + res.status + ")"; return; }
 
-      telopEl.textContent = ""; // 返答開始で消す
-
+      telop.textContent = ""; // 返答開始で消す
       const reader = res.body.getReader();
       const dec = new TextDecoder();
       let buf = "";
@@ -407,80 +462,136 @@ const dog = document.getElementById('dog');
         const { value, done } = await reader.read();
         if (done) break;
         buf += dec.decode(value, { stream:true });
-        let idx;
-        while ((idx = buf.indexOf("\n")) >= 0) {
-          const line = buf.slice(0, idx).trim();
-          buf = buf.slice(idx + 1);
+        let nl;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
           if (!line.startsWith("data:")) continue;
           const payload = line.slice(5).trim();
           if (payload === "[DONE]") { buf = ""; break; }
           try {
             const j = JSON.parse(payload);
-            const delta = j?.choices?.[0]?.delta?.content ?? "";
-            if (delta) telopEl.textContent += delta; // テロップに逐次追記
+            const delta = j?.choices?.[0]?.delta?.content || "";
+            if (delta) telop.textContent += delta;
           } catch {}
         }
       }
     } catch (e) {
-      telopEl.textContent = "通信エラー: " + (e?.message || e);
+      telop.textContent = "通信エラー: " + (e?.message || e);
     }
   }
 
-  // --- Web Speech API（音声→文字） ---
-  function createRecognizer() {
+  // ==== 音声→文字（優先：Web Speech / 代替：MediaRecorder + /stt） ====
+  let rec = null, stream = null, chunks = [], usingSpeechAPI = false, running = false, lastText = "";
+
+  function setupSpeechAPI() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) return null;
     const r = new SR();
     r.lang = "ja-JP";
-    r.interimResults = false;  // 確定結果だけ扱う
-    r.continuous = true;       // 連続で聞き続ける
+    r.interimResults = false;
+    r.continuous = true;
     r.maxAlternatives = 1;
+
+    // ★ ここは“準備中のまま”にする
+    r.onstart = () => { running = true; setPreparing("待機中"); };
+
+    // ★ 実際に音声取り込みが開始したら Ready にする
+    r.onaudiostart  = () => setReady();
+    r.onsoundstart  = () => setReady(); // 端末によってはこっちが先に来る
+
+    r.onend   = () => {
+      running = false;
+      setPreparing("待機中");
+      setTimeout(()=>{ try { r.start(); } catch {} }, 200);
+    };
+    r.onerror = (e) => {
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+        showPerm();
+        setPreparing("マイク許可が必要");
+      }
+    };
+    r.onresult = (ev) => {
+      let t = "";
+      for (let i = ev.resultIndex; i < ev.results.length; i++) {
+        if (ev.results[i].isFinal) t += ev.results[i][0].transcript;
+      }
+      t = (t || "").trim();
+      if (t && t !== lastText) { lastText = t; askChat(t); }
+    };
+    usingSpeechAPI = true;
     return r;
   }
 
-  let rec = null, autoRestart = true;
-  function startListen() {
-    if (!rec) {
-      rec = createRecognizer();
-      if (!rec) { telopEl.textContent = "このブラウザは音声入力に未対応です"; return; }
 
-      rec.onstart  = () => { micBtn.textContent = "🎧 聞いてます…（停止）"; };
-      rec.onend    = () => { micBtn.textContent = "🎤 マイク開始"; if (autoRestart) setTimeout(()=>{ try { rec.start(); } catch {} }, 200); };
-      rec.onerror  = (e) => {
-        // 権限ブロックなど
-        if (e.error === "not-allowed" || e.error === "service-not-allowed") {
-          telopEl.textContent = "マイク許可が必要です";
-        }
-      };
-      rec.onresult = (ev) => {
-        let finalText = "";
-        for (let i = ev.resultIndex; i < ev.results.length; i++) {
-          if (ev.results[i].isFinal) finalText += ev.results[i][0].transcript;
-        }
-        finalText = finalText.trim();
-        if (finalText) {
-          // 一旦止めて応答→自動再開
-          try { rec.stop(); } catch {}
-          askChat(finalText);
-        }
-      };
+  async function startMediaRecorder() {
+    try {
+      setPreparing("マイク初期化中");
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation:true, noiseSuppression:true } });
+    } catch (e) {
+      showPerm(); setPreparing("マイク許可が必要"); return;
     }
-    try { rec.start(); } catch {}
+    const m = new MediaRecorder(stream, { mimeType: "audio/webm" });
+    chunks = [];
+
+    // ★ 録音が“本当に開始”した瞬間に Ready
+    m.onstart = () => setReady();
+
+    m.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+    m.onstop = async () => {
+      if (!chunks.length) return;
+      const blob = new Blob(chunks, { type: "audio/webm" });
+      chunks = [];
+      try {
+        const res = await fetch(STT_URL, {
+          method: "POST",
+          headers: { "Content-Type": "audio/webm" },
+          body: await blob.arrayBuffer()
+        });
+        const { text = "" } = await res.json();
+        const t = (text || "").trim();
+        if (t && t !== lastText) {
+          lastText = t;
+          askChat(t);
+        }
+      } catch (e) { /* 無視（次サイクルへ） */ }
+      // 連続収音
+      if (running) { try { m.start(2000); } catch {} }
+    };
+    rec = m; running = true;
+    try { m.start(2000); } catch {}
   }
-  function stopListen() { if (rec) try { rec.stop(); } catch {} }
 
-  // ボタン：開始/停止トグル
-  let listening = false;
-  micBtn.addEventListener("click", () => {
-    listening = !listening;
-    if (listening) { autoRestart = true; startListen(); }
-    else { autoRestart = false; stopListen(); }
-  });
+  function showPerm() { perm.style.display = "flex"; }
+  function hidePerm() { perm.style.display = "none"; }
 
-  // 初期テキスト
-  telopEl.textContent = "ボタンを押して話しかけてね！";
+  async function startListening() {
+    if (running) return;
+    // 1) Web Speech API が使えれば優先（超低レイテンシ）
+    rec = setupSpeechAPI();
+    if (rec) { try { rec.start(); } catch { showPerm(); } return; }
+    // 2) 使えなければ MediaRecorder + /stt（広い互換性）
+    await startMediaRecorder();
+  }
+
+  function stopListening() {
+    running = false;
+    if (usingSpeechAPI && rec) try { rec.stop(); } catch {}
+    if (!usingSpeechAPI && rec) try { rec.stop(); } catch {}
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  }
+
+  // 自動開始をまず試みる（許可済みブラウザではボタン不要で走る）
+  setPreparing("マイク初期化中");   
+  startListening();
+
+  // 自動開始がブロックされた場合のみ、ワンタップで開始
+  btn?.addEventListener("click", async () => { hidePerm(); setPreparing("マイク初期化中"); await startListening(); }); // ← 変更
+
+  // ページ離脱で停止
+  window.addEventListener("pagehide", stopListening);
 })();
 </script>
+
 <!-- ★YOUR_API_KEY をあなたのキーに置き換え -->
 <script async src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAQQHZONAJ27HZwG20IJbRYZXZ6ADxbtP0&v=weekly"></script>
 </body>
