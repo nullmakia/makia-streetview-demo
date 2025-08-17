@@ -29,9 +29,10 @@
     aspect-ratio: 5/6;
     background: url('fool1.png') center / contain no-repeat;
   }
-  /* 犬（右下寄り・小さめ） */
+  /* ↓ 少年の右横に寄せる：少年の左位置 + 少年の幅 + 隙間(6vw) */
   .dog {
-    right: 10vw; bottom: 8vh;
+    left: calc(12vw + min(40vw, 30px) + 6vw);
+    bottom: 10vh;
     width: min(26vw, 220px);
     aspect-ratio: 5/6;
     background: url('fool2.png') center / contain no-repeat;
