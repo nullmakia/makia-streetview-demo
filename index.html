@@ -103,11 +103,17 @@
     </div>
   </div>
 
-<script>
-let pano, sv;
-let lastPanoId = null;
+<!-- 画面にトグルとキャリブレーションを追加 -->
+<button id="btnGyro" style="position:fixed;right:8px;bottom:64px;z-index:1000;">🎯 ジャイロOFF</button>
+<button id="btnCal"  style="position:fixed;right:8px;bottom:28px;z-index:1000;">↻ 方向校正</button>
 
-// ★ 角度ユーティリティ
+<script>
+// 既存の変数に追加
+let gyroMode = false;           // ジャイロで視線を制御するか
+let headingOffset = 0;          // 校正用オフセット（度）
+let smoothedHeading = null;     // 既存の平滑化済みヘディングを再利用
+let lastDeviceHeading = null;   // 端末からの最新ヘディング
+
 const toRad = d => d * Math.PI / 180;
 const toDeg = r => r * 180 / Math.PI;
 const norm360 = a => (a % 360 + 360) % 360;
@@ -117,169 +123,172 @@ const shortestDeltaDeg = (a,b) => {
   if (d < -180) d += 360;
   return d;
 };
-
-// ★ 2点間の進行方位（初期方位, bearing）
-function bearing(lat1, lng1, lat2, lng2) {
-  const φ1 = toRad(lat1), φ2 = toRad(lat2), Δλ = toRad(lng2 - lng1);
-  const y = Math.sin(Δλ) * Math.cos(φ2);
-  const x = Math.cos(φ1)*Math.cos(φ2) + Math.sin(φ1)*Math.sin(φ2)*Math.cos(Δλ);
-  return norm360(toDeg(Math.atan2(y, x)));
-}
-
-// ★ スムージング（指数移動平均）
 function smoothAngle(prev, next, alpha = 0.25) {
   if (prev == null) return next;
   const delta = shortestDeltaDeg(prev, next);
   return norm360(prev + alpha * delta);
 }
 
-function init() {
-  sv = new google.maps.StreetViewService();
-  pano = new google.maps.StreetViewPanorama(document.getElementById('pano'), {
-    addressControl: false,
-    fullscreenControl: false,
-    motionTracking: false,
-    disableDefaultUI: true,
-    visible: true
-  });
-
-  const st  = document.getElementById('st');
-  const spd = document.getElementById('spd');
-  const hdgEl = document.getElementById('hdg');
-
-  // ★ 進行方向・位置を保持
-  let lastPos = null;            // {lat, lng}
-  let smoothedHeading = null;    // 平滑化済み方位（度）
-
-  // ★ 進行方向にPovを向ける
-  function setHeadingTo(headingDeg) {
-    const pov = pano.getPov();
-    // 小さな揺れは無視（5〜8度くらい）
-    const delta = Math.abs(shortestDeltaDeg(pov.heading ?? 0, headingDeg));
-    if (delta < 6) return;
-    pano.setPov({ heading: headingDeg, pitch: pov.pitch ?? 0, zoom: 1 });
+// 端末向き → 方位に変換（iOS/Android両対応）
+function extractCompassHeadingFromEvent(e) {
+  // iOS Safari: webkitCompassHeading が「真北から時計回り（度）」
+  if (typeof e.webkitCompassHeading === 'number' && !isNaN(e.webkitCompassHeading)) {
+    return norm360(e.webkitCompassHeading + headingOffset);
   }
-
-  // ★ パノラマを「前進方向のリンク」に沿って切替
-  function maybeFollowForwardLink(panoData, desiredHeading) {
-    if (!panoData?.links?.length) return false;
-    // 進行方向に最も近いリンクを選択
-    let best = null, bestDiff = 999;
-    panoData.links.forEach(l => {
-      const diff = Math.abs(shortestDeltaDeg(desiredHeading, l.heading));
-      if (diff < bestDiff) { bestDiff = diff; best = l; }
-    });
-    // 進行方向に近いリンクがあれば、その先へ
-    if (best && bestDiff <= 45 && best.pano) {
-      if (best.pano !== lastPanoId) {
-        pano.setPano(best.pano);
-        lastPanoId = best.pano;
-        // 先でも視線を進行方向へ
-        setHeadingTo(desiredHeading);
-        return true;
-      }
-    }
-    return false;
+  // それ以外: alpha はデバイス座標(Z軸)の回転。画面の回転を補正する
+  if (typeof e.alpha === 'number') {
+    const so = screen.orientation?.angle || window.orientation || 0; // 0,90,180,270
+    // 端末を縦持ち前提の簡易補正（必要なら微調整可）
+    // コンパス的な北基準に合わせるため 360 - alpha
+    let heading = 360 - e.alpha;
+    // 画面回転を足す
+    heading = heading + so;
+    return norm360(heading + headingOffset);
   }
-
-  if ('geolocation' in navigator) {
-    navigator.geolocation.watchPosition(pos => {
-      const { latitude, longitude, accuracy, speed, heading } = pos.coords;
-      spd.textContent = (speed || 0).toFixed(1);
-      st.textContent = `測位OK（±${Math.round(accuracy||0)}m）`;
-
-      const here = { lat: latitude, lng: longitude };
-
-      // ★ 進行方向の決定
-      let course = null;
-      if (typeof heading === 'number' && heading >= 0 && (speed || 0) >= 3) {
-        // GPSのコース（速度が出ている時だけ信頼）
-        course = heading;
-      } else if (lastPos && (here.lat !== lastPos.lat || here.lng !== lastPos.lng)) {
-        // 自前のベアリング
-        course = bearing(lastPos.lat, lastPos.lng, here.lat, here.lng);
-      }
-      if (course != null) {
-        smoothedHeading = smoothAngle(smoothedHeading, course, 0.35);
-        hdgEl.textContent = smoothedHeading.toFixed(0);
-        setHeadingTo(smoothedHeading);
-      }
-
-      // ★ 近傍パノラマの取得（半径はやや広め）
-      sv.getPanorama({ location: here, radius: 100 }, (data, status) => {
-        if (status === 'OK' && data?.location) {
-          const panoId = data.location.pano;
-          if (panoId !== lastPanoId) {
-            // まず最寄りにジャンプ
-            pano.setPano(panoId);
-            lastPanoId = panoId;
-          }
-          // 常に視線を進行方向へ
-          if (smoothedHeading != null) {
-            setHeadingTo(smoothedHeading);
-            // 車移動時：可能なら前方リンクへ進める
-            if ((speed || 0) >= 4) {
-              maybeFollowForwardLink(data, smoothedHeading);
-            }
-          }
-        } else {
-          st.textContent = '近傍パノラマが見つかりません';
-        }
-      });
-
-      lastPos = here;
-    }, err => {
-      st.textContent = `測位エラー: ${err.message}`;
-    }, { enableHighAccuracy: true, maximumAge: 1000, timeout: 15000 });
-  } else {
-    st.textContent = 'Geolocation未対応';
-  }
-
-  // —— 端末コンパスのフォールバック（停止中や低速時のみ使う想定） —— //
-  function onOri(e) {
-    let heading = (typeof e.webkitCompassHeading === 'number')
-      ? e.webkitCompassHeading
-      : (e.absolute && typeof e.alpha === 'number') ? 360 - e.alpha : null;
-    if (heading != null) {
-      // 低速時のみコンパスで補助（車内の磁気誤差を考慮）
-      if (!spd.textContent || parseFloat(spd.textContent) < 2.0) {
-        smoothedHeading = smoothAngle(smoothedHeading, heading, 0.25);
-        hdgEl.textContent = smoothedHeading.toFixed(0);
-        setHeadingTo(smoothedHeading);
-      }
-    }
-  }
-  document.getElementById('btnMotion').addEventListener('click', () => {
-    const C = window.DeviceOrientationEvent;
-    if (C && typeof C.requestPermission === 'function') {
-      C.requestPermission().then(state => {
-        if (state === 'granted') addEventListener('deviceorientation', onOri, true);
-      }).catch(()=>{});
-    } else {
-      addEventListener('deviceorientation', onOri, true);
-    }
-  });
-
-  // —— 既存のキャラ反応処理はそのまま —— //
-  const boy = document.getElementById('boy');
-  const dog = document.getElementById('dog');
-  function bounce(el, cls) {
-    el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls);
-    el.addEventListener('animationend', () => el.classList.remove(cls), { once: true });
-  }
-  function bubble(el, text) {
-    const b = document.createElement('div');
-    b.className = 'bubble'; b.textContent = text; el.appendChild(b);
-    setTimeout(() => b.remove(), 800);
-  }
-  boy.addEventListener('click',  () => { bounce(boy, 'react'); bubble(boy, 'いこう！'); });
-  boy.addEventListener('touchend', (e) => { e.preventDefault(); bounce(boy, 'react'); bubble(boy, 'いこう！'); }, { passive:false });
-  dog.addEventListener('click',  () => { bounce(dog, 'react'); bubble(dog, 'ワン！'); });
-  dog.addEventListener('touchend', (e) => { e.preventDefault(); bounce(dog, 'react'); bubble(dog, 'ワン！'); }, { passive:false });
+  return null;
 }
+
+// StreetViewの視線を更新
+function setPovHeadingPitch(headingDeg, pitchDeg = null) {
+  if (!pano) return;
+  const pov = pano.getPov();
+  const target = {
+    heading: headingDeg != null ? headingDeg : (pov.heading ?? 0),
+    pitch:   pitchDeg   != null ? pitchDeg   : (pov.pitch ?? 0),
+    zoom:    pov.zoom ?? 1
+  };
+  // 小さな揺れは無視
+  const delta = Math.abs(shortestDeltaDeg(pov.heading ?? 0, target.heading));
+  if (delta < 5 && (pitchDeg == null || Math.abs((pov.pitch??0)-target.pitch) < 2)) return;
+  pano.setPov(target);
+}
+
+// DeviceOrientation ハンドラ
+function onDeviceOrientation(e) {
+  const h = extractCompassHeadingFromEvent(e);
+  if (h == null) return;
+  lastDeviceHeading = h;
+
+  // 低速/停止時だけジャイロで視線を制御（速度は既存UI/変数から取得）
+  const spdEl = document.getElementById('spd');
+  const speed = spdEl ? parseFloat(spdEl.textContent) : 0;
+
+  if (gyroMode && (isNaN(speed) || speed < 2.0)) {
+    smoothedHeading = smoothAngle(smoothedHeading, h, 0.25);
+    setPovHeadingPitch(smoothedHeading);
+    const hdgEl = document.getElementById('hdg');
+    if (hdgEl) hdgEl.textContent = smoothedHeading.toFixed(0);
+  }
+}
+
+// iOS の許可要求 + 監視開始
+async function enableDeviceOrientation() {
+  const C = window.DeviceOrientationEvent;
+  if (!C) return { ok:false, reason:'DeviceOrientation未対応' };
+
+  try {
+    if (typeof C.requestPermission === 'function') {
+      const state = await C.requestPermission();
+      if (state !== 'granted') return { ok:false, reason:'許可されませんでした' };
+    }
+    window.addEventListener('deviceorientation', onDeviceOrientation, true);
+    return { ok:true };
+  } catch (e) {
+    return { ok:false, reason: e?.message || '不明なエラー' };
+  }
+}
+
+// ジャイロON/OFFトグル
+document.getElementById('btnGyro').addEventListener('click', async () => {
+  if (!gyroMode) {
+    const { ok, reason } = await enableDeviceOrientation();
+    if (!ok) { alert('ジャイロを使えません: ' + reason); return; }
+    gyroMode = true;
+    document.getElementById('btnGyro').textContent = '🎯 ジャイロON';
+  } else {
+    gyroMode = false;
+    document.getElementById('btnGyro').textContent = '🎯 ジャイロOFF';
+  }
+});
+
+// 現在の向きを「正面」に校正（端末を向けた方向を0°とみなす）
+document.getElementById('btnCal').addEventListener('click', () => {
+  if (lastDeviceHeading == null) return;
+  // 直近のヘディングを正面にするためのオフセットを再計算
+  headingOffset = norm360((smoothedHeading ?? lastDeviceHeading) - lastDeviceHeading);
+});
+</script>
+
+<script type="module">
+  // ===== Street View 起動（importLibrary 方式） =====
+  const FALLBACK = { lat: 35.6595, lng: 139.7005 }; // 渋谷駅周辺を保険として
+  let lastPanoId = null;
+
+  // 既存のジャイロコードが参照できるように window 経由で公開
+  window.pano = null;
+  window.sv   = null;
+
+  // 近傍パノラマへ移動する共通関数
+  function showNearestPanorama(location, radius = 150, tag = '') {
+    window.sv.getPanorama({ location, radius }, (data, status) => {
+      if (status === 'OK' && data?.location) {
+        const panoId = data.location.pano;
+        if (panoId !== lastPanoId) {
+          window.pano.setPano(panoId);
+          lastPanoId = panoId;
+          // 視線は進行方向ロジックやジャイロで後から上書きされる想定
+        }
+      } else {
+        // 見つからなければ少し半径を広げて再試行（最大400m）
+        if (radius < 400) showNearestPanorama(location, Math.min(400, radius + 100), tag);
+      }
+    });
+  }
+
+  async function boot() {
+    // Google Maps ライブラリの動的読み込み
+    await google.maps.importLibrary("maps");
+    await google.maps.importLibrary("streetView");
+
+    // Street View 準備
+    window.sv = new google.maps.StreetViewService();
+    window.pano = new google.maps.StreetViewPanorama(
+      document.getElementById('pano'),
+      {
+        addressControl: false,
+        fullscreenControl: false,
+        motionTracking: false,
+        disableDefaultUI: true,
+        visible: true
+      }
+    );
+
+    // 1) まず必ずフォールバックを表示（黒画面防止）
+    showNearestPanorama(FALLBACK, 200, 'init');
+
+    // 2) 位置情報が取れたらそちらへ切替
+    const st  = document.getElementById('st');
+    if ('geolocation' in navigator) {
+      navigator.geolocation.watchPosition(pos => {
+        const { latitude, longitude, accuracy, speed } = pos.coords;
+        const spd = document.getElementById('spd');
+        if (spd) spd.textContent = (speed || 0).toFixed(1);
+        if (st) st.textContent = `測位OK（±${Math.round(accuracy||0)}m）`;
+        showNearestPanorama({ lat: latitude, lng: longitude }, 150, 'gps');
+      }, err => {
+        if (st) st.textContent = `測位エラー: ${err.message}（fallback表示を継続）`;
+      }, { enableHighAccuracy: true, maximumAge: 1000, timeout: 15000 });
+    } else {
+      if (st) st.textContent = 'Geolocation未対応（fallback表示）';
+    }
+  }
+
+  // google.maps が来たら起動
+  const ready = () => (window.google?.maps?.importLibrary) ? boot() : setTimeout(ready, 30);
+  ready();
 </script>
 
 <!-- ★YOUR_API_KEY をあなたのキーに置き換え -->
-<script async src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAQQHZONAJ27HZwG20IJbRYZXZ6ADxbtP0&callback=init&v=weekly"></script>
+<script async src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAQQHZONAJ27HZwG20IJbRYZXZ6ADxbtP0&v=weekly"></script>
 </body>
 </html>
