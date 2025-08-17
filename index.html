@@ -83,8 +83,13 @@
     100%{ opacity: 0; }
   }
 
-  /* HUD最小限 */
-  .hud    { z-index: 3000; } /* HUDは一番前 */
+  /* 既存の .hud に position を付けて最前面に固定 */
+  .hud {
+    position: fixed;
+    top: 12px;
+    left: 12px;
+    z-index: 3000;
+  }
   .hud button { padding: 6px 8px; border: 0; border-radius: 8px; }
 </style>
 
@@ -102,6 +107,10 @@
     <div>速度: <span id="spd">0.0</span> m/s　方位: <span id="hdg">—</span>°</div>
     <div style="margin-top:6px">
       <button id="btnMotion">モーション許可（iOS）</button>
+    </div>
+    <!-- ← ここにAI結果を移動 -->
+    <div style="margin-top:6px">
+      <strong>AI:</strong> <span id="aiResult">接続テスト中…</span>
     </div>
   </div>
 
@@ -317,6 +326,33 @@ const dog = document.getElementById('dog');
     bounce(dog, 'react'); bubble(dog, 'ワン！');
   }, { passive:false });
 });
+</script>
+<script>
+/** GitHub Pages から Cloudflare Worker を叩いて結果を表示する自動テスト */
+(async () => {
+  // ← 実URLに置換してください（/chat を忘れずに）
+  const WORKER_ENDPOINT = "https://makia-animator.animator.workers.dev/chat";
+
+  const out = document.getElementById("aiResult");
+  try {
+    const res = await fetch(WORKER_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        stream: false, // まずはJSONで確認。SSEは慣れてから
+        messages: [{ role: "user", content: "疎通テスト：1行で返答して" }]
+      }),
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    const text = data?.choices?.[0]?.message?.content ?? JSON.stringify(data);
+    out.textContent = text;
+  } catch (e) {
+    console.error("Worker fetch error", e);
+    out.textContent = "APIエラー: " + (e?.message || e);
+  }
+})();
 </script>
 
 <!-- ★YOUR_API_KEY をあなたのキーに置き換え -->
