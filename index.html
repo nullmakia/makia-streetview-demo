@@ -140,4 +140,53 @@ $("start").addEventListener("click", async ()=>{
 
   try{
     log("権限を取得中…");
-    await preflight(); // 許可
+    await preflight(); // 許可ダイアログ
+  }catch(e){
+    return log("権限取得失敗: "+(e?.name||e));
+  }
+
+  try{
+    log("録音初期化…");
+    stream = await navigator.mediaDevices.getUserMedia({audio:true});
+    const mime = pickAudioMime();
+    rec = mime ? new MediaRecorder(stream,{mimeType:mime}) : new MediaRecorder(stream);
+  }catch(e){
+    return log("録音開始失敗: "+(e?.name||e));
+  }
+
+  // レベルメーター
+  const stopMeter = startLevelMeter(stream);
+
+  chunks = [];
+  rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+  rec.onstart = ()=>{ $("stop").disabled = false; log("録音中…話しかけてください"); };
+  rec.onstop = async ()=>{
+    try{ stopMeter(); }catch{}
+    stream.getTracks().forEach(t=>t.stop());
+    const type = rec.mimeType || (chunks[0] && chunks[0].type) || "audio/webm";
+    const blob = new Blob(chunks,{type});
+    attachAudio(blob);
+    log("録音停止。ファイルを再生/保存できます。");
+    // 任意：STTへ
+    maybeSendToSTT(blob);
+  };
+
+  try{
+    rec.start(2000); // 2秒チャンク
+  }catch(e){
+    log("rec.start失敗: "+(e?.name||e));
+  }
+});
+
+$("stop").addEventListener("click", ()=>{
+  $("stop").disabled = true;
+  try{ rec && rec.stop(); }catch{}
+});
+
+$("clear").addEventListener("click", ()=>{
+  $("text").textContent="";
+  $("audioBox").textContent="（クリアしました）";
+  log("準備完了");
+});
+</script>
+</html>
