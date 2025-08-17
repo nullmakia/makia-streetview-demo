@@ -460,44 +460,53 @@ const dog = document.getElementById('dog');
   // ====== 音声入力（自動開始＋初回タップで再試行） ======
   let rec = null, stream = null, chunks = [], usingSpeechAPI = false, running = false, lastText = "", askedTap = false;
   let keepAlive = false;   // 開始ボタン押下中は true、停止で false
-  // === 開始/停止ボタン制御 ===
-  const micBtn = document.getElementById("micStart");
-  
-  function updateMicUI(isRunning) {
-    if (isRunning) {
-      micBtn.textContent = "■ 停止";
-    } else {
-      micBtn.textContent = "🎤 マイクを開始";
-    }
-  }
-  
-  micBtn.addEventListener("click", async () => {
-    if (!running) {
-      // 開始
-      keepAlive = true;
-      telop.textContent = "マイク初期化中…";
-      await startListening(true);   // ユーザー操作付きで開始
-      updateMicUI(true);
-    } else {
-      // 停止
-      keepAlive = false;
-      stopListening();
-      telop.textContent = "停止中";
-      updateMicUI(false);
-      everReadyShown = false;       // 次回も「準備中→話しかけてね！」を出す
-    }
-  });
+// === 開始/停止ボタン制御（置換） ===
+const micBtn = document.getElementById("micStart");
 
-function requireUserTapOnce(hint = "マイク許可が必要。画面を1回タップしてね") {
-  setTelop(hint);           // 準備中は出さず、明示メッセージのみ
-  // pointerdown よりブラウザ互換が高い click を使用
+function updateMicUI(isRunning) {
+  micBtn.textContent = isRunning ? "■ 停止" : "🎤 マイクを開始";
+}
+
+micBtn.addEventListener("click", () => {
+  if (!running) {
+    // 「await」しない：ユーザー操作の同期チェーンを崩さない
+    keepAlive = true;
+    telop.textContent = "マイク初期化中…";
+    startListening(true);       // ← await なし
+    updateMicUI(true);
+  } else {
+    keepAlive = false;
+    stopListening();
+    telop.textContent = "停止中";
+    updateMicUI(false);
+    everReadyShown = false;
+  }
+});
+
+function requireUserTapOnce(hint = "マイク許可が必要。右下の🎤をもう一度タップしてね") {
+  setTelop(hint);
   const once = async () => {
-    document.removeEventListener("click", once);
+    micBtn.removeEventListener("click", once);
     setTelop("マイク初期化中…");
-    await startListening(true);
+    // ここも await しない
+    startListening(true);
   };
-  // ページ全体クリックで1回だけ再試行
-  document.addEventListener("click", once, { once: true });
+  // ページ全体ではなく mic ボタンに限定（誤タップ防止 & iOS安定）
+  micBtn.addEventListener("click", once, { once: true });
+}
+
+function humanReadableMicError(e) {
+  const name = e && (e.name || e.code || e.message) || "unknown";
+  if (name.includes("NotAllowedError") || name.includes("PermissionDismissedError")) {
+    return "マイクが“拒否”または“ブロック”されています。ブラウザのサイト設定で『マイク: 許可』に変更して、ページを再読込してください。";
+  }
+  if (name.includes("NotFoundError") || name.includes("DevicesNotFoundError")) {
+    return "マイクデバイスが見つかりません。外部マイク/ヘッドセットを接続して再試行してください。";
+  }
+  if (name.includes("SecurityError") || !window.isSecureContext) {
+    return "HTTPSでのアクセスが必要です（GitHub PagesはOK）。http://では動きません。";
+  }
+  return "マイクの初期化に失敗しました（" + name + "）";
 }
 
 function setupSpeechAPI() {
@@ -566,12 +575,19 @@ async function startMediaRecorder(userGesture = false) {
       audio: { echoCancellation: true, noiseSuppression: true }
     });
   } catch (e) {
-    // 権限ブロック時はワンタップ誘導
-    requireUserTapOnce();
+    // ここで“許可が必要”を出し分け
+    const msg = humanReadableMicError(e);
+    setTelop(msg);
+
+    // 直前がユーザー操作だったのに失敗＝過去に「ブロック」済みの可能性が高い
+    // → requireUserTapOnce で再トライを出すが、実質は「ブラウザのサイト設定で許可→再読込」が必要
+    if (!userGesture) {
+      requireUserTapOnce();
+    }
     return;
   }
 
-  // 準備OK表示（iOSで最初 muted の場合にも保険）
+  // 権限OK → Ready 表示（muted 保険付き）
   const [track] = stream.getAudioTracks();
   if (track) {
     if (track.muted) {
@@ -584,7 +600,6 @@ async function startMediaRecorder(userGesture = false) {
     setTimeout(() => setReady(), 2000);
   }
 
-  // ★ ここが肝：端末に合う mimeType を選んで MediaRecorder を初期化
   const mime = pickAudioMime();
   let mrOptions = {};
   if (mime) mrOptions.mimeType = mime;
@@ -593,27 +608,17 @@ async function startMediaRecorder(userGesture = false) {
   try {
     m = new MediaRecorder(stream, mrOptions);
   } catch (e) {
-    // 型指定で失敗する端末は「型未指定」で再試行
     try { m = new MediaRecorder(stream); }
-    catch (e2) {
-      setTelop("録音初期化エラー");
-      return;
-    }
+    catch (e2) { setTelop("録音初期化エラー"); return; }
   }
 
   chunks = [];
   m.onstart = () => setReady();
   m.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
-
   m.onstop = async () => {
-    if (!chunks.length) {
-      if (running) { try { m.start(2000); } catch {} }
-      return;
-    }
-    // 実際に得られた Blob の型をそのまま使う（iOSは audio/mp4 になりがち）
+    if (!chunks.length) { if (running) { try { m.start(2000); } catch {} } return; }
     const blob = new Blob(chunks, { type: m.mimeType || (chunks[0] && chunks[0].type) || "" });
     chunks = [];
-
     try {
       const res = await fetch(STT_URL, {
         method: "POST",
@@ -637,20 +642,26 @@ async function startMediaRecorder(userGesture = false) {
 async function startListening(userGesture = false) {
   if (running) return;
 
-  // まずは Web Speech API（低遅延）
+  // まず Web Speech API
   rec = setupSpeechAPI();
   if (rec) {
     try {
       rec.start();
-    } catch (_) {
-      // ユーザー操作が必要/端末制限など
-      requireUserTapOnce();
+      const fallbackTimer = setTimeout(async () => {
+        if (!everReadyShown) { await disableSpeechAPIAndFallback("timeout"); }
+      }, 2500);
+      const clearAll = () => clearTimeout(fallbackTimer);
+      rec.onaudiostart = ((orig)=> (ev)=>{ orig?.(ev); clearAll(); }) (rec.onaudiostart);
+      rec.onsoundstart = ((orig)=> (ev)=>{ orig?.(ev); clearAll(); }) (rec.onsoundstart);
+      return;
+    } catch {
+      await disableSpeechAPIAndFallback("start-exception");
+      return;
     }
-    return;
   }
 
-  // 使えなければ MediaRecorder + /stt にフォールバック
-  await startMediaRecorder(userGesture);
+  // フォールバック
+  startMediaRecorder(userGesture); // await しない
 }
 
 // 端末が対応している音声 MIME を上から順に選ぶ
