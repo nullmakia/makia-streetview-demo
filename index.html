@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Street View × GPS × キャラ反応</title>
+
+<style>
+  html, body, #pano { height: 100%; margin: 0; background: #000; }
+  #pano {
+    position: fixed;
+    inset: 0;
+    z-index: 0;            /* 背景として最背面に固定 */
+  }
+  /* —— キャラ（前景） —— */
+  .sprite {
+    position: fixed;
+    z-index: 2000;         /* パノラマより十分手前に */
+    pointer-events: auto;
+    touch-action: manipulation;
+    image-rendering: auto;
+    filter: drop-shadow(0 8px 14px rgba(0,0,0,.35));
+    will-change: transform;
+    user-select: none;
+  }
+  /* 少年（左寄り・下） */
+  .boy {
+    left: 12vw; bottom: 10vh;
+    width: min(40vw, 320px);
+    aspect-ratio: 5/6;
+    background: url('fool1.png') center / contain no-repeat;
+  }
+  /* 犬（右下寄り・小さめ） */
+  .dog {
+    right: 10vw; bottom: 8vh;
+    width: min(26vw, 220px);
+    aspect-ratio: 5/6;
+    background: url('fool2.png') center / contain no-repeat;
+  }
+
+  /* 影（簡易） */
+  .shadow { z-index: 1500; } /* 影はキャラより背面だがパノラマより前 */
+
+  /* 反応アニメ（少年：ぴょん＋手を振る風の揺れ） */
+  @keyframes boyJump {
+    0%   { transform: translateY(0) rotate(0deg) }
+    20%  { transform: translateY(-14px) rotate(-2deg) }
+    40%  { transform: translateY(-22px) rotate(2deg) }
+    60%  { transform: translateY(-10px) rotate(-1deg) }
+    100% { transform: translateY(0) rotate(0deg) }
+  }
+  .boy.react { animation: boyJump .7s ease-out; }
+
+  /* 反応アニメ（犬：首ぶんぶん＋小ジャンプ） */
+  @keyframes dogShake {
+    0% { transform: translateY(0) rotate(0deg) }
+    15% { transform: translateY(-6px) rotate(-6deg) }
+    30% { transform: translateY(-6px) rotate(6deg) }
+    45% { transform: translateY(-6px) rotate(-6deg) }
+    60% { transform: translateY(-2px) rotate(4deg) }
+    100%{ transform: translateY(0) rotate(0deg) }
+  }
+  .dog.react { animation: dogShake .6s ease-out; }
+
+  /* セリフふきだし */
+  .bubble {
+    position: absolute; left: 50%; bottom: 100%;
+    transform: translateX(-50%);
+    white-space: nowrap;
+    background: rgba(255,255,255,.95);
+    color: #222; font: 600 14px/1.2 system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 8px 10px; border-radius: 14px;
+    border: 1px solid rgba(0,0,0,.15);
+    box-shadow: 0 6px 12px rgba(0,0,0,.18);
+    opacity: 0; animation: pop .75s ease forwards;
+    z-index: 20;
+  }
+  @keyframes pop {
+    0% { transform: translate(-50%, 6px) scale(.9); opacity: 0; }
+    40%{ transform: translate(-50%, 0)   scale(1);   opacity: 1; }
+    90%{ opacity: 1; }
+    100%{ opacity: 0; }
+  }
+
+  /* HUD最小限 */
+  .hud    { z-index: 3000; } /* HUDは一番前 */
+  .hud button { padding: 6px 8px; border: 0; border-radius: 8px; }
+</style>
+
+<body>
+  <div id="pano" aria-label="Street View 背景"></div>
+
+  <!-- 前景キャラ -->
+  <div class="sprite boy" id="boy"></div>
+  <div class="sprite dog" id="dog"></div>
+  <div class="shadow" aria-hidden="true"></div>
+
+  <!-- 状態表示 / iOSモーション許可 -->
+  <div class="hud">
+    <div>状態: <span id="st">初期化中…</span></div>
+    <div>速度: <span id="spd">0.0</span> m/s　方位: <span id="hdg">—</span>°</div>
+    <div style="margin-top:6px">
+      <button id="btnMotion">モーション許可（iOS）</button>
+    </div>
+  </div>
+
+<script>
+let pano, sv;
+let lastPanoId = null;
+
+function init() {
+  sv = new google.maps.StreetViewService();
+  pano = new google.maps.StreetViewPanorama(document.getElementById('pano'), {
+    addressControl: false,
+    fullscreenControl: false,
+    motionTracking: false,
+    disableDefaultUI: true
+  });
+
+  // GPS追従：近傍パノラマへ
+  const st  = document.getElementById('st');
+  const spd = document.getElementById('spd');
+  if ('geolocation' in navigator) {
+    navigator.geolocation.watchPosition(pos => {
+      const { latitude, longitude, accuracy, speed } = pos.coords;
+      spd.textContent = (speed || 0).toFixed(1);
+      st.textContent = `測位OK（±${Math.round(accuracy||0)}m）`;
+
+      const here = { lat: latitude, lng: longitude };
+      sv.getPanorama({ location: here, radius: 70 }, (data, status) => {
+        if (status === 'OK' && data?.location) {
+          const panoId = data.location.pano;
+          if (panoId !== lastPanoId) {
+            pano.setPano(panoId);
+            lastPanoId = panoId;
+            // 向きを仮に“自分→パノラマ中心”へ向ける
+            const loc = data.location.latLng;
+            const hd = Math.atan2(loc.lng() - here.lng, loc.lat() - here.lat) * 180 / Math.PI;
+            const pov = pano.getPov();
+            pano.setPov({ heading: hd || pov.heading, pitch: pov.pitch, zoom: 1 });
+          }
+        } else {
+          st.textContent = '近傍パノラマが見つかりません';
+        }
+      });
+    }, err => {
+      st.textContent = `測位エラー: ${err.message}`;
+    }, { enableHighAccuracy: true, maximumAge: 1000, timeout: 15000 });
+  } else {
+    st.textContent = 'Geolocation未対応';
+  }
+
+  // 端末の向きで視界を回す（iOSはユーザー操作で許可が必要）
+  const hdg = document.getElementById('hdg');
+  function onOri(e) {
+    let heading = (typeof e.webkitCompassHeading === 'number')
+      ? e.webkitCompassHeading
+      : (e.absolute && typeof e.alpha === 'number') ? 360 - e.alpha : null;
+    if (heading != null) {
+      hdg.textContent = heading.toFixed(0);
+      const pov = pano.getPov();
+      pano.setPov({ heading, pitch: pov.pitch, zoom: pov.zoom });
+    }
+  }
+  document.getElementById('btnMotion').addEventListener('click', () => {
+    const C = window.DeviceOrientationEvent;
+    if (C && typeof C.requestPermission === 'function') {
+      C.requestPermission().then(state => {
+        if (state === 'granted') addEventListener('deviceorientation', onOri, true);
+      }).catch(()=>{});
+    } else {
+      addEventListener('deviceorientation', onOri, true);
+    }
+  });
+
+  // —— タップ時のキャラ反応 —— //
+  const boy = document.getElementById('boy');
+  const dog = document.getElementById('dog');
+
+  function bounce(el, cls) {
+    el.classList.remove(cls); // 連打再生用
+    // reflow
+    void el.offsetWidth;
+    el.classList.add(cls);
+    el.addEventListener('animationend', () => el.classList.remove(cls), { once: true });
+  }
+  function bubble(el, text) {
+    const b = document.createElement('div');
+    b.className = 'bubble';
+    b.textContent = text;
+    el.appendChild(b);
+    setTimeout(() => b.remove(), 800);
+  }
+
+  // 少年：ジャンプ＋「いこう！」
+  boy.addEventListener('click',  () => { bounce(boy, 'react'); bubble(boy, 'いこう！'); });
+  boy.addEventListener('touchend', (e) => { e.preventDefault(); bounce(boy, 'react'); bubble(boy, 'いこう！'); }, { passive:false });
+
+  // 犬：ぶんぶん＋「ワン！」
+  dog.addEventListener('click',  () => { bounce(dog, 'react'); bubble(dog, 'ワン！'); });
+  dog.addEventListener('touchend', (e) => { e.preventDefault(); bounce(dog, 'react'); bubble(dog, 'ワン！'); }, { passive:false });
+}
+</script>
+
+<!-- ★YOUR_API_KEY をあなたのキーに置き換え -->
+<script async src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAQQHZONAJ27HZwG20IJbRYZXZ6ADxbtP0&callback=init&v=weekly"></script>
+</body>
+</html>
