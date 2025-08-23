@@ -93,6 +93,13 @@ function bubble(el, text){ const b=document.createElement('div'); b.className='b
     bounce(boy,'react');
     bubble(boy,'いこう！');
 
+    forceStopVisible = true;                 // 停止ボタンを強制表示モードに
+    startRecording();                        // 録音開始
+    stopBtn.classList.remove('hidden');      // 犬タップで隠れていても出す
+    stopBtn.style.display = 'block';
+    // （現在のuiHidden状態を踏まえ再評価しておくと安全）
+    setUIHidden(uiHidden);
+
     // ★追加：マイク開始
     startRecording();
     stopBtn.style.display = "block";   // 停止ボタンを強制表示
@@ -284,6 +291,8 @@ document.getElementById("gyroBtn").addEventListener("click", () => {
 });
 
 /***** foolをタップで非表示・表示 *****/
+let forceStopVisible = false; 
+
 const uiButtons = [
   document.getElementById('gyroBtn'), // ない場合もあるので後でnullチェック
   document.getElementById('micBtn'),
@@ -295,11 +304,16 @@ let uiHidden = false;
 function setUIHidden(next) {
   uiHidden = next;
   uiButtons.forEach(el => {
-    if (!el) return;              // ないボタンはスキップ
+    if (!el) return;
+    // ★ recが録音中、または強制表示フラグが立っている場合は stopBtn を隠さない
+    if (el === stopBtn && (forceStopVisible || (rec && rec.state === 'recording'))) {
+      el.classList.remove('hidden');
+      el.style.display = 'block';
+      return;
+    }
     el.classList.toggle('hidden', uiHidden);
   });
 }
-
 /***** Step3：MediaRecorder 録音 → STT → 会話API *****/
 let stream=null, rec=null, chunks=[], stopLevel=null;
 const micBtn = document.getElementById('micBtn');
@@ -365,7 +379,7 @@ async function startRecording(){
   chunks=[];
   rec.ondataavailable = e=>{ if(e.data && e.data.size) chunks.push(e.data); };
   rec.onstart = ()=>{ setTelop('録音中…話しかけてね'); stopBtn.disabled = false; micBtn.disabled = true; };
-  rec.onstop  = async ()=>{
+  rec.onstop = async ()=>{
     stopBtn.disabled = true; micBtn.disabled = false;
     try{ stopLevel && stopLevel(); }catch{} try{ stream.getTracks().forEach(t=>t.stop()); }catch{}
     const type = rec.mimeType || (chunks[0] && chunks[0].type) || 'audio/webm';
@@ -376,6 +390,13 @@ async function startRecording(){
     if (!text) { setTelop('（聞き取れなかったかも）'); return; }
     // キャラの吹き出し＆Chat へ
     telop.textContent = '…考え中'; await askChat(text);
+
+    forceStopVisible = false;
+    if (uiHidden) {
+      stopBtn.classList.add('hidden');
+    }
+    stopBtn.style.display = 'none';
+
   };
   try{ rec.start(2000); }catch(e){ setTelop('rec.start失敗'); }
 }
@@ -383,7 +404,9 @@ async function startRecording(){
 micBtn.addEventListener('click', startRecording);
 stopBtn.addEventListener('click', ()=>{
   try{ rec && rec.stop(); }catch{}
-  stopBtn.style.display = "none";   // ★追加：停止ボタンを非表示
+  forceStopVisible = false;                 // ★追加
+  if (uiHidden) stopBtn.classList.add('hidden'); // ★追加
+  stopBtn.style.display = "none";
 });
 
 
