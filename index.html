@@ -107,6 +107,37 @@ async function bootMaps(){
 }
 (function ready(){ if (window.google?.maps?.importLibrary) bootMaps(); else setTimeout(ready, 30); })();
 
+/***** デバイス方位センサーで Street View を回す *****/
+if (window.DeviceOrientationEvent) {
+  window.addEventListener("deviceorientationabsolute", handleOrientation, true);
+  window.addEventListener("deviceorientation", handleOrientation, true);
+}
+
+function handleOrientation(event) {
+  if (!window.pano) return;
+
+  let heading = null;
+
+  if (typeof event.webkitCompassHeading !== "undefined") {
+    // iOS (Safari) 用
+    heading = event.webkitCompassHeading;
+  } else if (event.alpha !== null) {
+    // Android Chrome 等
+    heading = 360 - event.alpha; // alphaは時計回り、Street Viewは逆向き
+  }
+
+  if (heading !== null) {
+    window.pano.setPov({
+      heading: heading,
+      pitch: 0
+    });
+    // HUDに表示
+    const hdgEl = document.getElementById("hdg");
+    if (hdgEl) hdgEl.textContent = heading.toFixed(0);
+  }
+}
+
+
 /***** Step3：MediaRecorder 録音 → STT → 会話API *****/
 let stream=null, rec=null, chunks=[], stopLevel=null;
 const micBtn = document.getElementById('micBtn');
