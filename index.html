@@ -83,25 +83,29 @@ function setTelop(t){ telop.textContent = t; stHud.textContent = t; }
 function bounce(el, cls){ el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls);
   el.addEventListener('animationend', ()=> el.classList.remove(cls), { once:true }); }
 function bubble(el, text){ const b=document.createElement('div'); b.className='bubble'; b.textContent=text; el.appendChild(b); setTimeout(()=>b.remove(), 800); }
-  ['click','touchend'].forEach(type => {boy.addEventListener(type, async e=>{
-    if(type==='touchend') e.preventDefault();
-    bounce(boy,'react');
-    bubble(boy,'いこう！');
-
-    // 既に録音中なら二重起動しない
-    if (window.rec?.state === 'recording') return;
-
-    // 停止ボタンの強制表示（犬で隠れていても出す）
-    forceStopVisible = true;
-    stopBtn.classList.remove('hidden');
-    stopBtn.style.display = 'block';
-
-    // 1回だけ録音開始
-    startRecording();
-
-    // UIの再評価（HUD等は隠したままでも停止だけは表示）
-    setUIHidden(uiHidden);
-  }, {passive:false});
+  ['click','touchend'].forEach(type => {
+    boy.addEventListener(type, async e=>{
+      if(type==='touchend') e.preventDefault();
+      bounce(boy,'react');
+      bubble(boy,'いこう！');
+      if (window.rec?.state === 'recording') return;
+  
+      forceStopVisible = true;
+      stopBtn.classList.remove('hidden');
+      stopBtn.style.display = 'block';
+  
+      startRecording();
+      setUIHidden(uiHidden);
+    }, {passive:false});
+  
+    // ★ 犬タップでUIの表示/非表示を切り替え
+    dog.addEventListener(type, e=>{
+      if(type==='touchend') e.preventDefault();
+      bounce(dog,'react');
+      bubble(dog,'ワン！');
+      setUIHidden(!uiHidden);   // ← これでトグル
+    }, {passive:false});
+  });
 });
 
 
@@ -286,7 +290,6 @@ let forceStopVisible = false;
 
 const uiButtons = [
   document.getElementById('gyroBtn'), // ない場合もあるので後でnullチェック
-  document.getElementById('micBtn'),
   document.getElementById('stopBtn'),
   document.getElementById('camBtn'),
   document.querySelector('.hud'),
