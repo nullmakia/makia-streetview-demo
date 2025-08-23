@@ -463,17 +463,16 @@ async function startRecording(){
     setStatus('STT送信中…');
     let text = '';
     try{ text = await sendToSTT(blob); }catch(e){ setStatus('STT失敗'); return; }
-    if (!text) { setStatus('（聞き取れなかったかも）'); return; }
-    // キャラの吹き出し＆Chat へ
-    showReplyThinking();
-    await askChat(text);
-
-    forceStopVisible = false;
-    if (uiHidden) {
-      stopBtn.classList.add('hidden');
+      if (!text) { setStatus('（聞き取れなかったかも）'); return; }
+      // キャラの吹き出し＆Chat へ
+      showReplyThinking();
+      await askChat(text);
+    } finally {
+      // ★ ここは必ず実行：強制表示解除＆見た目を閉じる
+      forceStopVisible = false;
+      if (uiHidden) stopBtn.classList.add('hidden');
+      stopBtn.style.display = 'none';
     }
-    stopBtn.style.display = 'none';
-
   };
   try{ rec.start(2000); }catch(e){ setStatus('rec.start失敗'); }
 }
