@@ -57,6 +57,9 @@
 
   <!-- テロップ / マイク -->
   <div id="aiTelopBox"><span id="aiTelop">タップで開始</span></div>
+  <button id="gyroBtn" style="position:fixed; right:12px; bottom:122px; z-index:4001; padding:10px 12px; border:1px solid #111; background:#0a7; color:#fff; border-radius:10px;">
+    🧭 方角追従ON
+  </button>
   <button id="micBtn">🎤 マイクを開始</button>
   <button id="stopBtn" disabled>■ 停止</button>
   <div class="meter"><div id="levelBar" class="bar"></div></div>
@@ -94,8 +97,15 @@ async function bootMaps(){
   await google.maps.importLibrary("streetView");
   window.sv = new google.maps.StreetViewService();
   window.pano = new google.maps.StreetViewPanorama(document.getElementById('pano'),{
-    addressControl:false, fullscreenControl:false, motionTracking:false, disableDefaultUI:true, visible:true
+    addressControl:false,
+    fullscreenControl:false,
+    disableDefaultUI:true,
+    visible:true,
+    // iOS/Android の「端末の向きで回す」をMaps側に任せる（任せたくないなら true→false のままでもOK）
+    motionTracking:true,
+    motionTrackingControl:false
   });
+
   showNearestPanorama(FALLBACK, 200);
   if ('geolocation' in navigator) {
     navigator.geolocation.watchPosition(pos=>{
@@ -136,6 +146,32 @@ function handleOrientation(event) {
     if (hdgEl) hdgEl.textContent = heading.toFixed(0);
   }
 }
+
+let gyroEnabled = false;
+async function enableOrientationTracking() {
+  // iOS（Safari）: requestPermission が必要
+  if (typeof DeviceOrientationEvent !== "undefined" &&
+      typeof DeviceOrientationEvent.requestPermission === "function") {
+    try {
+      const state = await DeviceOrientationEvent.requestPermission(); // ← ユーザー操作直後にしか呼べません
+      if (state !== "granted") { setTelop("方位センサーの許可が得られませんでした"); return; }
+    } catch (e) {
+      setTelop("方位センサーの許可要求に失敗"); return;
+    }
+  }
+  // 許可後にイベント購読（iOS/Android両対応）
+  window.addEventListener("deviceorientationabsolute", handleOrientation, true);
+  window.addEventListener("deviceorientation", handleOrientation, true);
+  gyroEnabled = true;
+  setTelop("方角追従を開始");
+  document.getElementById("gyroBtn").textContent = "🧭 方角追従ON（稼働中）";
+}
+
+// 既存の micBtn の click にぶら下げてもOK（最初のユーザー操作を活用）
+document.getElementById("gyroBtn").addEventListener("click", () => {
+  if (!gyroEnabled) enableOrientationTracking();
+});
+
 
 
 /***** Step3：MediaRecorder 録音 → STT → 会話API *****/
