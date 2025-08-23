@@ -176,37 +176,63 @@ function updateCamUI(){
 }
 
 async function switchTo(nextMode){
-  // 現在のストリームを止める
+  // 既存ストリーム停止
   stopCamStream();
 
   if (nextMode === 'off') {
     camMode = 'off';
+    camEl.style.display = "none";
+    panoEl.style.display = "block";
     updateCamUI();
     return;
   }
 
-  // nextMode が 'back' か 'front' の場合は getUserMedia
-  const facingMode = (nextMode === 'back') ? { exact: "environment" } : { exact: "user" };
-  // 一部端末では exact が失敗するのでフォールバックも用意
-  const tryGetStream = async (constraint) => {
-    return navigator.mediaDevices.getUserMedia({ video: { facingMode: constraint }, audio: false });
-  };
+  const want = nextMode === 'back' ? "environment" : "user";
+  const exact = { exact: want };
+  const getWith = (fm) => navigator.mediaDevices.getUserMedia({
+    video: { facingMode: fm, width:{ideal:1280}, height:{ideal:720} },
+    audio: false
+  });
 
   try {
-    try {
-      camStream = await tryGetStream(facingMode);
-    } catch {
-      // exact がダメならヒント指定にフォールバック
-      const hint = (nextMode === 'back') ? "environment" : "user";
-      camStream = await tryGetStream(hint);
-    }
-    camEl.srcObject = camStream;
+    try { camStream = await getWith(exact); }
+    catch { camStream = await getWith(want); }
+
+    const vtrack = camStream.getVideoTracks()[0];
+    if (!vtrack) throw new Error("no video track");
+
     camMode = nextMode;
+
+    // ★ 先に表示を切り替え → srcObject → play() の順（黒対策）
+    panoEl.style.display = "none";
+    camEl.style.display  = "block";
+    camEl.muted = true;
+    camEl.setAttribute('playsinline','true');
+    camEl.setAttribute('webkit-playsinline','true');
+
+    camEl.srcObject = camStream;
+
+    try {
+      await camEl.play();
+    } catch {
+      await new Promise(r => camEl.addEventListener('loadedmetadata', r, {once:true}));
+      try { await camEl.play(); } catch {}
+    }
+
     updateCamUI();
+
+    // 保険：500ms後にまだ真っ黒ならもう一度 play
+    setTimeout(()=>{
+      if (camMode!=='off' && camEl.videoWidth === 0) {
+        camEl.play().catch(()=>{});
+      }
+    }, 500);
+
   } catch (e) {
-    setTelop("カメラ開始できません: " + (e?.message || e));
-    // 失敗したら Street View に戻す
+    setTelop("カメラ開始できません: " + (e?.name || "") + " " + (e?.message || e));
     camMode = 'off';
+    camEl.style.display = "none";
+    panoEl.style.display = "block";
     updateCamUI();
   }
 }
@@ -227,7 +253,12 @@ camBtn.addEventListener("click", async ()=>{
 
 // ページ離脱で停止（既存の pagehide ハンドラがあれば併存OK）
 window.addEventListener('pagehide', stopCamStream);
-
+// ★ バックグラウンド復帰時の黒対策
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && camMode !== 'off' && camEl.srcObject) {
+    camEl.play().catch(()=>{});
+  }
+});
 
 /***** デバイス方位センサーで Street View を回す *****/
 if (window.DeviceOrientationEvent) {
