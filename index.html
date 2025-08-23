@@ -32,13 +32,12 @@
   #aiTelopBox{ position:fixed; left:12px; right:12px; bottom:12px; padding:10px 12px; background:rgba(255,255,255,.92);
     border:1px solid #e5e5e5; border-radius:12px; backdrop-filter:blur(4px); box-shadow:0 4px 18px rgba(0,0,0,.12);
     z-index:4000; font-size:14px; }
-  #micBtn{ position:fixed; right:12px; bottom:80px; z-index:4001; padding:10px 12px; border:1px solid #111;
+  #micBtn{ position:fixed; right:12px; bottom:100px; z-index:4001; padding:10px 12px; border:1px solid #111;
     background:#111; color:#fff; border-radius:10px; }
-  #stopBtn{ position:fixed; right:12px; bottom:38px; z-index:4001; padding:10px 12px; border:1px solid #111;
+  #stopBtn{ position:fixed; right:12px; bottom:58px; z-index:4001; padding:10px 12px; border:1px solid #111;
     background:#444; color:#fff; border-radius:10px; }
 
-  .meter{ position:fixed; left:12px; right:120px; bottom:54px; height:8px; background:rgba(255,255,255,.5);
-    border-radius:999px; overflow:hidden; z-index:4001 }
+  .meter{ display: none; }
   .bar{ height:100%; width:0% }
   .hidden { display: none !important; }
 </style>
@@ -58,7 +57,7 @@
 
   <!-- テロップ / マイク -->
   <div id="aiTelopBox"><span id="aiTelop">タップで開始</span></div>
-  <button id="gyroBtn" style="position:fixed; right:12px; bottom:122px; z-index:4001; padding:10px 12px; border:1px solid #111; background:#0a7; color:#fff; border-radius:10px;">
+  <button id="gyroBtn" style="position:fixed; right:12px; bottom:142px; z-index:4001; padding:10px 12px; border:1px solid #111; background:#0a7; color:#fff; border-radius:10px;">
     🧭 方角追従ON
   </button>
   <button id="micBtn">🎤 マイクを開始</button>
