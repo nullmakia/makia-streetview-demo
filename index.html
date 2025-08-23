@@ -58,7 +58,7 @@
   </video>
 
   <!-- テロップ / マイク -->
-  <div id="aiTelopBox"><span id="aiTelop">タップで開始</span></div>
+  <div id="aiTelopBox"><span id="aiTelop">フール君をタップ！</span></div>
   <button id="camBtn" style="position:fixed; right:12px; bottom:180px; z-index:4001; padding:10px 12px; border:1px solid #111; background:#07a; color:#fff; border-radius:10px;">
     📷 カメラON
   </button>
@@ -93,7 +93,7 @@ function bubble(el, text){ const b=document.createElement('div'); b.className='b
     boy.addEventListener(type, async e=>{
       if(type==='touchend') e.preventDefault();
       bounce(boy,'react');
-      bubble(boy,'いこう！');
+      bubble(boy,'どうしたの？');
       if (window.rec?.state === 'recording') return;
   
       forceStopVisible = true;
@@ -487,7 +487,7 @@ async function startRecording(){
         return;
       }
       if (!text) {
-        setStatus('（聞き取れなかったかも）');
+        setTelop('（聞き取れなかったかも・・・画面をリロードしてみて！）');
         return;
       }
   
