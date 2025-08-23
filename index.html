@@ -121,9 +121,8 @@ function showNearestPanorama(location, radius=150){
   window.sv.getPanorama({ location, radius }, (data, status) => {
     if (status === 'OK' && data?.location) {
       window.pano.setPano(data.location.pano);
-      // ★ 追加：今見えているならリフロー
-      if (panoEl.style.display !== 'none') reflowStreetView();
-    }
+     const el = document.getElementById('pano');
+     if (el && el.style.display !== 'none') reflowStreetView();    }
   });
 }
 async function bootMaps(){
