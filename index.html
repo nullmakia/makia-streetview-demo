@@ -113,7 +113,11 @@ window.pano = null; window.sv = null;
 const FALLBACK = { lat: 35.6595, lng: 139.7005 };
 function showNearestPanorama(location, radius=150){
   window.sv.getPanorama({ location, radius }, (data, status) => {
-    if (status === 'OK' && data?.location) { window.pano.setPano(data.location.pano); }
+    if (status === 'OK' && data?.location) {
+      window.pano.setPano(data.location.pano);
+      // ★ 追加：今見えているならリフロー
+      if (panoEl.style.display !== 'none') reflowStreetView();
+    }
   });
 }
 async function bootMaps(){
@@ -141,7 +145,6 @@ async function bootMaps(){
 }
 (function ready(){ if (window.google?.maps?.importLibrary) bootMaps(); else setTimeout(ready, 30); })();
 
-/***** カメラモードに切り替え *****/
 /***** カメラ3状態トグル（off / back / front） *****/
 const camBtn = document.getElementById("camBtn");
 const camEl  = document.getElementById("cam");
@@ -184,6 +187,8 @@ async function switchTo(nextMode){
     camEl.style.display = "none";
     panoEl.style.display = "block";
     updateCamUI();
+    // ★ 追加：SVを確実に再描画（ハードモードで）
+    reflowStreetView(true);
     return;
   }
 
@@ -235,6 +240,32 @@ async function switchTo(nextMode){
     panoEl.style.display = "block";
     updateCamUI();
   }
+}
+
+function reflowStreetView(hard = false) {
+  if (!window.pano) return;
+  // 表示状態を保証
+  panoEl.style.display = 'block';
+  try {
+    // 可視化+リサイズ通知で再描画を促す
+    window.pano.setVisible(true);
+    google.maps.event.trigger(window.pano, 'resize');
+
+    // POVをセットし直してもう一押し
+    const pov = window.pano.getPov && window.pano.getPov();
+    if (pov) window.pano.setPov({ heading: pov.heading, pitch: pov.pitch });
+
+    // それでも怪しい端末向け：同じpanoIdを再セット（ハードリセット）
+    if (hard) {
+      const id = window.pano.getPano && window.pano.getPano();
+      if (id) window.pano.setPano(id);
+    }
+
+    // レース対策でタイマーでもう一度
+    setTimeout(() => {
+      google.maps.event.trigger(window.pano, 'resize');
+    }, 50);
+  } catch {}
 }
 
 // 初期表示
