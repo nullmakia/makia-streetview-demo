@@ -86,15 +86,26 @@ function setTelop(t){ telop.textContent = t; stHud.textContent = t; }
 function bounce(el, cls){ el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls);
   el.addEventListener('animationend', ()=> el.classList.remove(cls), { once:true }); }
 function bubble(el, text){ const b=document.createElement('div'); b.className='bubble'; b.textContent=text; el.appendChild(b); setTimeout(()=>b.remove(), 800); }
+
 ['click','touchend'].forEach(type => {
-  boy.addEventListener(type, e=>{ if(type==='touchend') e.preventDefault(); bounce(boy,'react'); bubble(boy,'いこう！'); }, {passive:false});
+  boy.addEventListener(type, e=>{
+    if(type==='touchend') e.preventDefault();
+    bounce(boy,'react');
+    bubble(boy,'いこう！');
+
+    // ★追加：マイク開始
+    startRecording();
+    stopBtn.style.display = "block";   // 停止ボタンを強制表示
+  }, {passive:false});
+  
   dog.addEventListener(type, e=>{
     if(type==='touchend') e.preventDefault();
     bounce(dog,'react');
     bubble(dog,'ワン！');
-    setUIHidden(!uiHidden); // ← これで3ボタンの表示/非表示をトグル
+    setUIHidden(!uiHidden);
   }, {passive:false});
 });
+
 
 /***** Street View（最小起動） *****/
 window.pano = null; window.sv = null;
@@ -370,7 +381,11 @@ async function startRecording(){
 }
 
 micBtn.addEventListener('click', startRecording);
-stopBtn.addEventListener('click', ()=>{ try{ rec && rec.stop(); }catch{} });
+stopBtn.addEventListener('click', ()=>{
+  try{ rec && rec.stop(); }catch{}
+  stopBtn.style.display = "none";   // ★追加：停止ボタンを非表示
+});
+
 
 /***** 便利：ページ離脱で停止 *****/
 window.addEventListener('pagehide', ()=>{ try{ rec && rec.stop(); }catch{} try{ stream && stream.getTracks().forEach(t=>t.stop()); }catch{} });
