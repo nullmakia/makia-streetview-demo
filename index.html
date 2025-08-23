@@ -55,7 +55,6 @@
     <div>速度: <span id="spd">0.0</span> m/s　方位: <span id="hdg">—</span>°</div>
   </div>
 
-  <div id="pano" aria-label="Street View 背景"></div>
   <video id="cam" autoplay playsinline muted
     style="position:fixed; inset:0; width:100%; height:100%; object-fit:cover; z-index:0; display:none; pointer-events:none;">
   </video>
@@ -131,36 +130,91 @@ async function bootMaps(){
 (function ready(){ if (window.google?.maps?.importLibrary) bootMaps(); else setTimeout(ready, 30); })();
 
 /***** カメラモードに切り替え *****/
+/***** カメラ3状態トグル（off / back / front） *****/
 const camBtn = document.getElementById("camBtn");
 const camEl  = document.getElementById("cam");
-let camStream = null;
-let camMode = false;
+const panoEl = document.getElementById("pano");
 
-camBtn.addEventListener("click", async ()=>{
-  if (!camMode) {
-    // カメラON
-    try {
-      camStream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:"environment" } });
-      camEl.srcObject = camStream;
-      camEl.style.display = "block";
-      document.getElementById("pano").style.display = "none";
-      camBtn.textContent = "📷 カメラOFF";
-      camMode = true;
-    } catch(e) {
-      alert("カメラを開始できません: " + e.message);
-    }
-  } else {
-    // カメラOFF → StreetViewへ戻す
-    if (camStream) {
-      camStream.getTracks().forEach(t=>t.stop());
-      camStream = null;
-    }
+let camStream = null;
+/** 'off' | 'back' | 'front' */
+let camMode = 'off';
+
+function stopCamStream(){
+  try { camStream && camStream.getTracks().forEach(t=>t.stop()); } catch {}
+  camStream = null;
+}
+
+function updateCamUI(){
+  if (camMode === 'off') {
     camEl.style.display = "none";
-    document.getElementById("pano").style.display = "block";
-    camBtn.textContent = "📷 カメラON";
-    camMode = false;
+    panoEl.style.display = "block";
+    camBtn.textContent = "📷 外カメラ";
+    setTelop("Street View");
+  } else if (camMode === 'back') {
+    camEl.style.display = "block";
+    panoEl.style.display = "none";
+    camBtn.textContent = "🤳 内カメラ";
+    setTelop("カメラ（外）");
+  } else { // 'front'
+    camEl.style.display = "block";
+    panoEl.style.display = "none";
+    camBtn.textContent = "🗺️ OFF（SV）";
+    setTelop("カメラ（内）");
+  }
+}
+
+async function switchTo(nextMode){
+  // 現在のストリームを止める
+  stopCamStream();
+
+  if (nextMode === 'off') {
+    camMode = 'off';
+    updateCamUI();
+    return;
+  }
+
+  // nextMode が 'back' か 'front' の場合は getUserMedia
+  const facingMode = (nextMode === 'back') ? { exact: "environment" } : { exact: "user" };
+  // 一部端末では exact が失敗するのでフォールバックも用意
+  const tryGetStream = async (constraint) => {
+    return navigator.mediaDevices.getUserMedia({ video: { facingMode: constraint }, audio: false });
+  };
+
+  try {
+    try {
+      camStream = await tryGetStream(facingMode);
+    } catch {
+      // exact がダメならヒント指定にフォールバック
+      const hint = (nextMode === 'back') ? "environment" : "user";
+      camStream = await tryGetStream(hint);
+    }
+    camEl.srcObject = camStream;
+    camMode = nextMode;
+    updateCamUI();
+  } catch (e) {
+    setTelop("カメラ開始できません: " + (e?.message || e));
+    // 失敗したら Street View に戻す
+    camMode = 'off';
+    updateCamUI();
+  }
+}
+
+// 初期表示
+updateCamUI();
+
+// クリックごとに状態を回す
+camBtn.addEventListener("click", async ()=>{
+  if (camMode === 'off') {
+    await switchTo('back');   // OFF → 外
+  } else if (camMode === 'back') {
+    await switchTo('front');  // 外 → 内
+  } else {
+    await switchTo('off');    // 内 → OFF
   }
 });
+
+// ページ離脱で停止（既存の pagehide ハンドラがあれば併存OK）
+window.addEventListener('pagehide', stopCamStream);
 
 
 /***** デバイス方位センサーで Street View を回す *****/
