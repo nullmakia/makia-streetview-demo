@@ -125,6 +125,8 @@ function showNearestPanorama(location, radius=150){
      if (el && el.style.display !== 'none') reflowStreetView();    }
   });
 }
+
+let __lastLL = null;
 async function bootMaps(){
   await google.maps.importLibrary("maps");
   await google.maps.importLibrary("streetView");
@@ -142,8 +144,17 @@ async function bootMaps(){
   showNearestPanorama(FALLBACK, 200);
   if ('geolocation' in navigator) {
     navigator.geolocation.watchPosition(pos=>{
-      const { latitude, longitude, accuracy, speed } = pos.coords;
+      const { latitude, longitude, speed } = pos.coords;
       const spdEl = document.getElementById('spd'); if (spdEl) spdEl.textContent = (speed||0).toFixed(1);
+    
+      // ★ 追加：ほぼ同じ場所ならSV再取得をスキップ（≒ ~5〜10m未満でスキップ）
+      if (__lastLL &&
+          Math.abs(latitude  - __lastLL.lat) < 0.00005 &&
+          Math.abs(longitude - __lastLL.lng) < 0.00005) {
+        return; // SV取り直しなし
+      }
+      __lastLL = { lat: latitude, lng: longitude };
+    
       showNearestPanorama({lat:latitude,lng:longitude}, 150);
     });
   }
