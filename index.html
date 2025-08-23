@@ -6,6 +6,8 @@
 
 <style>
   html, body, #pano { height: 100%; margin: 0; background: #000; }
+  button:disabled { opacity: .5; pointer-events: none; }
+
   #pano { position: fixed; inset: 0; z-index: 0; }
 
   /* —— キャラ（前景） —— */
@@ -93,6 +95,7 @@ function bubble(el, text){ const b=document.createElement('div'); b.className='b
     boy.addEventListener(type, async e=>{
       if(type==='touchend') e.preventDefault();
       bounce(boy,'react');
+      if (!svReady) { bubble(boy,'準備中…'); return; }  // ★追加
       bubble(boy,'どうしたの？');
       if (window.rec?.state === 'recording') return;
   
@@ -108,6 +111,7 @@ function bubble(el, text){ const b=document.createElement('div'); b.className='b
     dog.addEventListener(type, e=>{
       if(type==='touchend') e.preventDefault();
       bounce(dog,'react');
+      if (!svReady) { bubble(dog,'準備中…'); return; }  // ★追加
       bubble(dog,'ワン！');
       setUIHidden(!uiHidden);   // ← これでトグル
     }, {passive:false});
@@ -117,14 +121,28 @@ function bubble(el, text){ const b=document.createElement('div'); b.className='b
 /***** Street View（最小起動） *****/
 window.pano = null; window.sv = null;
 const FALLBACK = { lat: 35.6595, lng: 139.7005 };
-function showNearestPanorama(location, radius=150){
+function showNearestPanorama(location, radius=150, onOK){
   window.sv.getPanorama({ location, radius }, (data, status) => {
     if (status === 'OK' && data?.location) {
       window.pano.setPano(data.location.pano);
-     const el = document.getElementById('pano');
-     if (el && el.style.display !== 'none') reflowStreetView();    }
+      const el = document.getElementById('pano');
+      if (el && el.style.display !== 'none') reflowStreetView();
+      if (typeof onOK === 'function') onOK(data);
+    }
   });
 }
+
+// 現在地SVが初めて表示できたか
+let svReady = false;
+
+// UIの有効/無効をまとめて切替
+function setUIInteractivity(on){
+  const cb = document.getElementById('camBtn');
+  const gb = document.getElementById('gyroBtn');
+  const sb = document.getElementById('stopBtn');
+  [cb, gb, sb].forEach(b => b && (b.disabled = !on));
+}
+
 
 let __lastLL = null;
 async function bootMaps(){
@@ -142,6 +160,10 @@ async function bootMaps(){
   });
 
   showNearestPanorama(FALLBACK, 200);
+
+  setStatus('現在地のストリートビューを準備中…');
+  setUIInteractivity(false);
+
   if ('geolocation' in navigator) {
     navigator.geolocation.watchPosition(pos=>{
       const { latitude, longitude, speed } = pos.coords;
@@ -155,7 +177,14 @@ async function bootMaps(){
       }
       __lastLL = { lat: latitude, lng: longitude };
     
-      showNearestPanorama({lat:latitude,lng:longitude}, 150);
+      // 現在地SVに切替 → 初回だけUIを解除
+      showNearestPanorama({lat:latitude,lng:longitude}, 150, ()=>{
+        if (!svReady) {
+          svReady = true;
+          setUIInteractivity(true);
+          setStatus('Street View（現在地）');
+        }
+      });
     });
   }
 }
@@ -289,6 +318,7 @@ updateCamUI();
 
 // クリックごとに状態を回す
 camBtn.addEventListener("click", async ()=>{
+  if (!svReady) return;
   if (camMode === 'off') {
     await switchTo('back');   // OFF → 外
   } else if (camMode === 'back') {
@@ -359,6 +389,7 @@ async function enableOrientationTracking() {
 
 // 既存の micBtn の click にぶら下げてもOK（最初のユーザー操作を活用）
 document.getElementById("gyroBtn").addEventListener("click", () => {
+  if (!svReady) return;
   if (!gyroEnabled) enableOrientationTracking();
 });
 
