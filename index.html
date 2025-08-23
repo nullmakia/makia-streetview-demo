@@ -55,8 +55,14 @@
     <div>速度: <span id="spd">0.0</span> m/s　方位: <span id="hdg">—</span>°</div>
   </div>
 
+  <div id="pano" aria-label="Street View 背景"></div>
+  <video id="cam" autoplay playsinline muted style="position:fixed; inset:0; width:100%; height:100%; object-fit:
   <!-- テロップ / マイク -->
   <div id="aiTelopBox"><span id="aiTelop">タップで開始</span></div>
+cover; z-index:0; display:none;"></video>
+<button id="camBtn" style="position:fixed; right:12px; bottom:180px; z-index:4001; padding:10px 12px; border:1px solid #111; background:#07a; color:#fff; border-radius:10px;">
+  📷 カメラON
+</button>
   <button id="gyroBtn" style="position:fixed; right:12px; bottom:142px; z-index:4001; padding:10px 12px; border:1px solid #111; background:#0a7; color:#fff; border-radius:10px;">
     🧭 方角追従ON
   </button>
@@ -121,6 +127,39 @@ async function bootMaps(){
   }
 }
 (function ready(){ if (window.google?.maps?.importLibrary) bootMaps(); else setTimeout(ready, 30); })();
+
+/***** カメラモードに切り替え *****/
+const camBtn = document.getElementById("camBtn");
+const camEl  = document.getElementById("cam");
+let camStream = null;
+let camMode = false;
+
+camBtn.addEventListener("click", async ()=>{
+  if (!camMode) {
+    // カメラON
+    try {
+      camStream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:"environment" } });
+      camEl.srcObject = camStream;
+      camEl.style.display = "block";
+      document.getElementById("pano").style.display = "none";
+      camBtn.textContent = "📷 カメラOFF";
+      camMode = true;
+    } catch(e) {
+      alert("カメラを開始できません: " + e.message);
+    }
+  } else {
+    // カメラOFF → StreetViewへ戻す
+    if (camStream) {
+      camStream.getTracks().forEach(t=>t.stop());
+      camStream = null;
+    }
+    camEl.style.display = "none";
+    document.getElementById("pano").style.display = "block";
+    camBtn.textContent = "📷 カメラON";
+    camMode = false;
+  }
+});
+
 
 /***** デバイス方位センサーで Street View を回す *****/
 if (window.DeviceOrientationEvent) {
