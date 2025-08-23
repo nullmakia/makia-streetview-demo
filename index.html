@@ -32,9 +32,7 @@
   #aiTelopBox{ position:fixed; left:12px; right:12px; bottom:12px; padding:10px 12px; background:rgba(255,255,255,.92);
     border:1px solid #e5e5e5; border-radius:12px; backdrop-filter:blur(4px); box-shadow:0 4px 18px rgba(0,0,0,.12);
     z-index:4000; font-size:14px; }
-  #micBtn{ position:fixed; right:12px; bottom:100px; z-index:4001; padding:10px 12px; border:1px solid #111;
-    background:#111; color:#fff; border-radius:10px; }
-  #stopBtn{ position:fixed; right:12px; bottom:58px; z-index:4001; padding:10px 12px; border:1px solid #111;
+  #stopBtn{ position:fixed; right:12px; bottom:100px; z-index:4001; padding:10px 12px; border:1px solid #111;
     background:#444; color:#fff; border-radius:10px; }
 
   .meter{ display: none; }
@@ -67,7 +65,6 @@
   <button id="gyroBtn" style="position:fixed; right:12px; bottom:142px; z-index:4001; padding:10px 12px; border:1px solid #111; background:#0a7; color:#fff; border-radius:10px;">
     🧭 方角追従ON
   </button>
-  <button id="micBtn">🎤 マイクを開始</button>
   <button id="stopBtn" disabled>■ 停止</button>
   <div class="meter"><div id="levelBar" class="bar"></div></div>
 
@@ -86,30 +83,24 @@ function setTelop(t){ telop.textContent = t; stHud.textContent = t; }
 function bounce(el, cls){ el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls);
   el.addEventListener('animationend', ()=> el.classList.remove(cls), { once:true }); }
 function bubble(el, text){ const b=document.createElement('div'); b.className='bubble'; b.textContent=text; el.appendChild(b); setTimeout(()=>b.remove(), 800); }
-
-['click','touchend'].forEach(type => {
-  boy.addEventListener(type, e=>{
+  ['click','touchend'].forEach(type => {boy.addEventListener(type, async e=>{
     if(type==='touchend') e.preventDefault();
     bounce(boy,'react');
     bubble(boy,'いこう！');
 
-    forceStopVisible = true;                 // 停止ボタンを強制表示モードに
-    startRecording();                        // 録音開始
-    stopBtn.classList.remove('hidden');      // 犬タップで隠れていても出す
-    stopBtn.style.display = 'block';
-    // （現在のuiHidden状態を踏まえ再評価しておくと安全）
-    setUIHidden(uiHidden);
+    // 既に録音中なら二重起動しない
+    if (window.rec?.state === 'recording') return;
 
-    // ★追加：マイク開始
+    // 停止ボタンの強制表示（犬で隠れていても出す）
+    forceStopVisible = true;
+    stopBtn.classList.remove('hidden');
+    stopBtn.style.display = 'block';
+
+    // 1回だけ録音開始
     startRecording();
-    stopBtn.style.display = "block";   // 停止ボタンを強制表示
-  }, {passive:false});
-  
-  dog.addEventListener(type, e=>{
-    if(type==='touchend') e.preventDefault();
-    bounce(dog,'react');
-    bubble(dog,'ワン！');
-    setUIHidden(!uiHidden);
+
+    // UIの再評価（HUD等は隠したままでも停止だけは表示）
+    setUIHidden(uiHidden);
   }, {passive:false});
 });
 
@@ -317,7 +308,6 @@ function setUIHidden(next) {
 }
 /***** Step3：MediaRecorder 録音 → STT → 会話API *****/
 let stream=null, rec=null, chunks=[], stopLevel=null;
-const micBtn = document.getElementById('micBtn');
 const stopBtn= document.getElementById('stopBtn');
 
 function pickAudioMime(){
@@ -379,9 +369,9 @@ async function startRecording(){
 
   chunks=[];
   rec.ondataavailable = e=>{ if(e.data && e.data.size) chunks.push(e.data); };
-  rec.onstart = ()=>{ setTelop('録音中…話しかけてね'); stopBtn.disabled = false; micBtn.disabled = true; };
+  rec.onstart = ()=>{ setTelop('録音中…話しかけてね'); stopBtn.disabled = false; };
   rec.onstop = async ()=>{
-    stopBtn.disabled = true; micBtn.disabled = false;
+    stopBtn.disabled = true;
     try{ stopLevel && stopLevel(); }catch{} try{ stream.getTracks().forEach(t=>t.stop()); }catch{}
     const type = rec.mimeType || (chunks[0] && chunks[0].type) || 'audio/webm';
     const blob = new Blob(chunks,{type});
@@ -402,7 +392,6 @@ async function startRecording(){
   try{ rec.start(2000); }catch(e){ setTelop('rec.start失敗'); }
 }
 
-micBtn.addEventListener('click', startRecording);
 stopBtn.addEventListener('click', ()=>{
   try{ rec && rec.stop(); }catch{}
   forceStopVisible = false;                 // ★追加
