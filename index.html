@@ -29,29 +29,9 @@
 
   /* HUD / テロップ / マイクボタン */
   .hud { position: fixed; top: 12px; left: 12px; z-index: 3000; color: #fff; text-shadow:0 1px 3px rgba(0,0,0,.6) }
-  #aiTelopBox{
-    position:absolute;              /* ← fixedからabsoluteに */
-    left: calc(12vw + min(40vw, 320px) / 2);  /* boyの中央X */
-    bottom: calc(10vh + min(40vw, 320px) + 20px); /* boyの高さぶん＋余白 */
-    padding:10px 14px;
-    background:rgba(255,255,255,.95);
-    border:1px solid rgba(0,0,0,.2);
-    border-radius:14px;
-    box-shadow:0 6px 12px rgba(0,0,0,.2);
-    max-width:70vw;
-    font-size:14px;
-    z-index:2100;
-  }
-  #aiTelopBox::after{
-    content:"";
-    position:absolute;
-    left:50%; bottom:-8px;
-    transform:translateX(-50%) rotate(45deg);
-    width:14px; height:14px;
-    background:inherit;
-    border-right:1px solid rgba(0,0,0,.2);
-    border-bottom:1px solid rgba(0,0,0,.2);
-  }
+  #aiTelopBox{ position:fixed; left:12px; right:12px; bottom:12px; padding:10px 12px; background:rgba(255,255,255,.92);
+    border:1px solid #e5e5e5; border-radius:12px; backdrop-filter:blur(4px); box-shadow:0 4px 18px rgba(0,0,0,.12);
+    z-index:4000; font-size:14px; }
   #micBtn{ position:fixed; right:12px; bottom:80px; z-index:4001; padding:10px 12px; border:1px solid #111;
     background:#111; color:#fff; border-radius:10px; }
   #stopBtn{ position:fixed; right:12px; bottom:38px; z-index:4001; padding:10px 12px; border:1px solid #111;
