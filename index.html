@@ -40,6 +40,7 @@
   .meter{ position:fixed; left:12px; right:120px; bottom:54px; height:8px; background:rgba(255,255,255,.5);
     border-radius:999px; overflow:hidden; z-index:4001 }
   .bar{ height:100%; width:0% }
+  .hidden { display: none !important; }
 </style>
 
 <body>
@@ -80,7 +81,12 @@ function bounce(el, cls){ el.classList.remove(cls); void el.offsetWidth; el.clas
   el.addEventListener('animationend', ()=> el.classList.remove(cls), { once:true }); }
 function bubble(el, text){ const b=document.createElement('div'); b.className='bubble'; b.textContent=text; el.appendChild(b); setTimeout(()=>b.remove(), 800); }
 ['click','touchend'].forEach(type => {
-  boy.addEventListener(type, e=>{ if(type==='touchend') e.preventDefault(); bounce(boy,'react'); bubble(boy,'いこう！'); }, {passive:false});
+  boy.addEventListener(type, e=>{
+    if(type==='touchend') e.preventDefault();
+    bounce(boy,'react');
+    bubble(boy,'いこう！');
+    setUIHidden(!uiHidden); // ← これで3ボタンの表示/非表示をトグル
+  }, {passive:false});
   dog.addEventListener(type, e=>{ if(type==='touchend') e.preventDefault(); bounce(dog,'react'); bubble(dog,'ワン！'); }, {passive:false});
 });
 
@@ -172,7 +178,21 @@ document.getElementById("gyroBtn").addEventListener("click", () => {
   if (!gyroEnabled) enableOrientationTracking();
 });
 
+/***** foolをタップで非表示・表示 *****/
+const uiButtons = [
+  document.getElementById('gyroBtn'), // ない場合もあるので後でnullチェック
+  document.getElementById('micBtn'),
+  document.getElementById('stopBtn'),
+];
 
+let uiHidden = false;
+function setUIHidden(next) {
+  uiHidden = next;
+  uiButtons.forEach(el => {
+    if (!el) return;              // ないボタンはスキップ
+    el.classList.toggle('hidden', uiHidden);
+  });
+}
 
 /***** Step3：MediaRecorder 録音 → STT → 会話API *****/
 let stream=null, rec=null, chunks=[], stopLevel=null;
