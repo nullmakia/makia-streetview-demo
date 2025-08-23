@@ -82,7 +82,7 @@ function setTelop(t){ telop.textContent = t; stHud.textContent = t; }
 /***** キャラの反応 *****/
 function bounce(el, cls){ el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls);
   el.addEventListener('animationend', ()=> el.classList.remove(cls), { once:true }); }
-function bubble(el, text){ const b=document.createElement('div'); b.className='bubble'; b.textContent=text; el.appendChild(b); setTimeout(()=>b.remove(), 800); }
+function bubble(el, text){ const b=document.createElement('div'); b.className='bubble'; b.textContent=text; el.appendChild(b); setTimeout(()=> b.remove(), 800); }
   ['click','touchend'].forEach(type => {
     boy.addEventListener(type, async e=>{
       if(type==='touchend') e.preventDefault();
@@ -106,7 +106,6 @@ function bubble(el, text){ const b=document.createElement('div'); b.className='b
       setUIHidden(!uiHidden);   // ← これでトグル
     }, {passive:false});
   });
-});
 
 
 /***** Street View（最小起動） *****/
