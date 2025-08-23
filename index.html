@@ -77,7 +77,10 @@ const CHAT_URL = WORKER_BASE + "/chat";       // テキスト→会話応答（�
 /***** テロップ *****/
 const telop = document.getElementById("aiTelop");
 const stHud = document.getElementById("st");
-function setTelop(t){ telop.textContent = t; stHud.textContent = t; }
+function setStatus(t){ stHud.textContent = t; }          // ← 状態はHUDだけ
+function clearReply(){ telop.textContent = ''; }         // ← 会話表示を消す
+function showReplyThinking(){ telop.textContent = '…考え中'; } // ← 会話前の一瞬だけ使う
+function appendReplyChunk(s){ telop.textContent += s; }  // ← ストリーミング追加
 
 /***** キャラの反応 *****/
 function bounce(el, cls){ el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls);
@@ -164,17 +167,17 @@ function updateCamUI(){
     camEl.style.display = "none";
     panoEl.style.display = "block";
     camBtn.textContent = "📷 外カメラ";
-    setTelop("Street View");
+    setStatus("Street View");    // ← ここ
   } else if (camMode === 'back') {
     camEl.style.display = "block";
     panoEl.style.display = "none";
     camBtn.textContent = "🤳 内カメラ";
-    setTelop("カメラ（外）");
-  } else { // 'front'
+    setStatus("カメラ（外）");
+  } else {
     camEl.style.display = "block";
     panoEl.style.display = "none";
     camBtn.textContent = "🗺️ OFF（SV）";
-    setTelop("カメラ（内）");
+    setStatus("カメラ（内）");
   }
 }
 
@@ -234,7 +237,7 @@ async function switchTo(nextMode){
     }, 500);
 
   } catch (e) {
-    setTelop("カメラ開始できません: " + (e?.name || "") + " " + (e?.message || e));
+    setStatus("カメラ開始できません: " + (e?.name || "") + " " + (e?.message || e));
     camMode = 'off';
     camEl.style.display = "none";
     panoEl.style.display = "block";
@@ -328,16 +331,16 @@ async function enableOrientationTracking() {
       typeof DeviceOrientationEvent.requestPermission === "function") {
     try {
       const state = await DeviceOrientationEvent.requestPermission(); // ← ユーザー操作直後にしか呼べません
-      if (state !== "granted") { setTelop("方位センサーの許可が得られませんでした"); return; }
+      if (state !== "granted") { setStatus("方位センサーの許可が得られませんでした"); return; }
     } catch (e) {
-      setTelop("方位センサーの許可要求に失敗"); return;
+      setStatus("方位センサーの許可要求に失敗"); return;
     }
   }
   // 許可後にイベント購読（iOS/Android両対応）
   window.addEventListener("deviceorientationabsolute", handleOrientation, true);
   window.addEventListener("deviceorientation", handleOrientation, true);
   gyroEnabled = true;
-  setTelop("方角追従を開始");
+  setStatus("方角追従を開始");
   document.getElementById("gyroBtn").textContent = "🧭 方角追従ON（稼働中）";
 }
 
@@ -405,25 +408,40 @@ async function askChat(text){
       model:"gpt-4o-mini", stream:true,
       messages:[ {role:"system", content:"あなたは元気な少年キャラ『Fool』です。短い日本語セリフで返答。敬称不要。絵文字は控えめ。"}, {role:"user", content:text} ]
     }) });
-    if (!res.ok || !res.body){ setTelop("接続エラー("+res.status+")"); return; }
-    setTelop(""); const reader = res.body.getReader(); const dec = new TextDecoder(); let buf="";
-    for(;;){ const {value,done} = await reader.read(); if(done) break; buf += dec.decode(value,{stream:true}); let nl; while((nl = buf.indexOf("\n"))>=0){
-        const line = buf.slice(0,nl).trim(); buf = buf.slice(nl+1); if(!line.startsWith("data:")) continue; const payload=line.slice(5).trim(); if(payload==="[DONE]") {buf=""; break;}
-        try{ const j = JSON.parse(payload); const delta = j?.choices?.[0]?.delta?.content || ""; if(delta) telop.textContent += delta; }catch{}
-    } }
-  }catch(e){ setTelop("通信エラー: "+(e?.message||e)); }
+    if (!res.ok || !res.body){ setStatus("接続エラー("+res.status+")"); return; }
+
+    clearReply(); // ← テロップを空にしてから
+    const reader = res.body.getReader(); const dec = new TextDecoder(); let buf="";
+    for(;;){
+      const {value,done} = await reader.read(); if(done) break;
+      buf += dec.decode(value,{stream:true});
+      let nl;
+      while((nl = buf.indexOf("\n"))>=0){
+        const line = buf.slice(0,nl).trim(); buf = buf.slice(nl+1);
+        if(!line.startsWith("data:")) continue;
+        const payload=line.slice(5).trim(); if(payload==="[DONE]") {buf=""; break;}
+        try{
+          const j = JSON.parse(payload);
+          const delta = j?.choices?.[0]?.delta?.content || "";
+          if(delta) appendReplyChunk(delta); // ← 会話本文はテロップだけに流す
+        }catch{}
+      }
+    }
+  }catch(e){
+    setStatus("通信エラー: "+(e?.message||e)); // ← エラーはHUDだけ
+  }
 }
 
 async function startRecording(){
-  if (!isSecureContext) { setTelop('HTTPSで開いてください'); return; }
-  if (!navigator.mediaDevices?.getUserMedia) { setTelop('getUserMedia未対応'); return; }
+  if (!isSecureContext) { setStatus('HTTPSで開いてください'); return; }
+  if (!navigator.mediaDevices?.getUserMedia) { setStatus('getUserMedia未対応'); return; }
 
-  setTelop('権限取得中…');
-  try{ await preflightMic(); }catch(e){ setTelop('権限取得失敗'); return; }
+  setStatus('権限取得中…');
+  try{ await preflightMic(); }catch(e){ setStatus('権限取得失敗'); return; }
 
-  setTelop('録音初期化…');
+  setStatus('録音初期化…');
   try{ stream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:true, noiseSuppression:true, autoGainControl:true, channelCount:1 } }); }
-  catch(e){ setTelop('録音用ストリーム失敗'); return; }
+  catch(e){ setStatus('録音用ストリーム失敗'); return; }
 
   try{ stopLevel = startLevelMeter(stream); }catch{}
 
@@ -433,18 +451,19 @@ async function startRecording(){
 
   chunks=[];
   rec.ondataavailable = e=>{ if(e.data && e.data.size) chunks.push(e.data); };
-  rec.onstart = ()=>{ setTelop('録音中…話しかけてね'); stopBtn.disabled = false; };
+  rec.onstart = ()=>{ setStatus('録音中…話しかけてね'); stopBtn.disabled = false; };
   rec.onstop = async ()=>{
     stopBtn.disabled = true;
     try{ stopLevel && stopLevel(); }catch{} try{ stream.getTracks().forEach(t=>t.stop()); }catch{}
     const type = rec.mimeType || (chunks[0] && chunks[0].type) || 'audio/webm';
     const blob = new Blob(chunks,{type});
-    setTelop('STT送信中…');
+    setStatus('STT送信中…');
     let text = '';
     try{ text = await sendToSTT(blob); }catch(e){ setTelop('STT失敗'); return; }
     if (!text) { setTelop('（聞き取れなかったかも）'); return; }
     // キャラの吹き出し＆Chat へ
-    telop.textContent = '…考え中'; await askChat(text);
+    showReplyThinking();
+    await askChat(text);
 
     forceStopVisible = false;
     if (uiHidden) {
@@ -453,7 +472,7 @@ async function startRecording(){
     stopBtn.style.display = 'none';
 
   };
-  try{ rec.start(2000); }catch(e){ setTelop('rec.start失敗'); }
+  try{ rec.start(2000); }catch(e){ setStatus('rec.start失敗'); }
 }
 
 stopBtn.addEventListener('click', ()=>{
