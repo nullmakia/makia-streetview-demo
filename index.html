@@ -82,6 +82,9 @@ function clearReply(){ telop.textContent = ''; }         // ← 会話表示を�
 function showReplyThinking(){ telop.textContent = '…考え中'; } // ← 会話前の一瞬だけ使う
 function appendReplyChunk(s){ telop.textContent += s; }  // ← ストリーミング追加
 
+const boy = document.getElementById('boy');
+const dog = document.getElementById('dog');
+
 /***** キャラの反応 *****/
 function bounce(el, cls){ el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls);
   el.addEventListener('animationend', ()=> el.classList.remove(cls), { once:true }); }
@@ -447,7 +450,7 @@ async function startRecording(){
 
   const mime = pickAudioMime();
   try{ rec = mime ? new MediaRecorder(stream,{mimeType:mime}) : new MediaRecorder(stream); }
-  catch(e){ setTelop('MediaRecorder作成失敗'); return; }
+  catch(e){ setStatus('MediaRecorder作成失敗'); return; }
 
   chunks=[];
   rec.ondataavailable = e=>{ if(e.data && e.data.size) chunks.push(e.data); };
@@ -459,8 +462,8 @@ async function startRecording(){
     const blob = new Blob(chunks,{type});
     setStatus('STT送信中…');
     let text = '';
-    try{ text = await sendToSTT(blob); }catch(e){ setTelop('STT失敗'); return; }
-    if (!text) { setTelop('（聞き取れなかったかも）'); return; }
+    try{ text = await sendToSTT(blob); }catch(e){ setStatus('STT失敗'); return; }
+    if (!text) { setStatus('（聞き取れなかったかも）'); return; }
     // キャラの吹き出し＆Chat へ
     showReplyThinking();
     await askChat(text);
